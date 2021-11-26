@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<style>
+html {
+	--CSColorLevel1:#525252;
+	--CSColorLevel2:#999;
+	--CSColorLevel3:#f0f0f0;
+	--CSBackColor:#fff;
+	--CSBackColorLevel2:#eee;
+	--CSBorderColor:#ddd;
+	--CSBorderColor:;
+	--CSLogoFilter:none;
+	--CSSliderFilledColor:#0679f9;
+	--CSSliderRemainColor:#ddd;
+}
+@media (prefers-color-scheme: dark)
+{
+	html {
+		--CSColorLevel1:#dedede;
+		--CSColorLevel2:#b3b3b3;
+		--CSColorLevel3:#404040;
+		--CSBackColor:#282828;
+		--CSBackColorLevel2:#222;
+		--CSBorderColor:#1a1a1a;
+		--CSLogoFilter:invert(.77);
+		--CSSliderFilledColor:#b3b3b3;
+		--CSSliderRemainColor:#404040;
+	}
+}
+* {
+	margin:0;
+	padding:0;
+	outline:0;
+	box-sizing:border-box;
+}
+html {
+	background-color:var(--CSBackColor);
+	color:var(--CSColorLevel1);
+	width:300px;
+	height:156px;
+}
+body {
+	width:100%;
+	height:100%;
+	line-height:20px;
+	font-size:14px;
+	font-family:sans-serif;
+	user-select:none;
+	cursor:default;
+}
+svg {
+	display:block;
+	fill:currentcolor;
+	stroke:currentcolor;
+	stroke-width:0;
+}
+.CSView {
+	width:100%;
+	height:100%;
+}
+.CSFlex {
+	display:flex;
+	align-items:center;
+}
+.CSFlexCol {
+	display:flex;
+	flex-flow:column;
+}
+.CSFlexItem {
+	flex:1;
+}
+.CSSlider {
+	-webkit-appearance:none;
+	height:2px;
+}
+.CSSlider::-webkit-slider-thumb {
+	-webkit-appearance:none;
+	background-color:#fff;
+	box-shadow:0 1px 3px #777;
+	width:14px;
+	height:14px;
+	border-radius:50%;
+}
+.CSSwitch {
+	width:30px;
+}
+.CSAdjustView {
+	padding:20px 20px 16px;
+}
+.CSAppTitle {
+	margin-bottom:16px;
+	font-size:16px;
+	text-align:center;
+}
+.CSAdjustButton {
+	color:var(--CSColorLevel2);
+	width:34px;
+	height:34px;
+	padding:8px;
+	border-radius:50%;
+}
+.CSAdjustButton:hover {
+	color:var(--CSColorLevel1);
+}
+.CSAdjustButton:active {
+	background-color:var(--CSColorLevel3);
+}
+.CSAdjustSlider {
+	margin:0 8px;
+}
+.CSHostname {
+	width:150px;
+	margin:0 auto;
+	white-space:nowrap;
+	overflow:hidden;
+	text-overflow:ellipsis;
+	text-align:center;
+	font-size:12px;
+}
+.CSSwitchOption {
+	margin:5px 0;
+}
+.CSControls {
+	margin:8px -8px 2px;
+}
+.CSAboutView {
+	font-size:13px;
+}
+.CSAbout {
+	padding:0 20px;
+}
+.CSLogo {
+	background-image:url(/assets/icon.png);
+	background-size:100%;
+	width:42px;
+	height:42px;
+	margin-right:12px;
+	filter:var(--CSLogoFilter);
+}
+.CSShortcuts {
+	border-top:1px solid var(--CSBorderColor);
+	padding:18px 0;
+	text-align:center;
+}
+.CSButton {
+	display:inline-block;
+	border:1px solid var(--CSColorLevel2);
+	border-radius:3px;
+	padding:8px 16px;
+	margin:0 5px;
+}
+.CSButton:hover {
+	cursor:pointer;
+}
+</style>
+<div hidden>
+	<div protoId="UIDefault" class="CSView"></div>
+	<div protoId="UIAboutView" class="CSView CSAboutView CSFlexCol">
+		<div class="CSFlex CSFlexItem CSAbout">
+			<div class="CSLogo"></div>
+			<div class="CSFlexItem">Go to any website and click this icon or use the keyboard shortcuts.</div>
+		</div>
+		<div class="CSShortcuts">
+			<div class="CSButton" id="shortcuts">Create Keyboard Shortcuts</div>
+		</div>
+	</div>
+	<div protoId="UIAdjustView" class="CSView CSAdjustView">
+		<div class="CSAppTitle">Lett Web Dimmer</div>
+		<div class="CSControlPane">
+			<div class="CSFlex CSSwitchOption" id="localSwitch">
+				<div class="CSFlexItem">Override on this site</div>
+			</div>
+			<div class="CSFlex CSControls" id="controls"></div>
+			<div class="CSHostname" id="hostname"></div>
+		</div>
+	</div>
+	<input protoId="UISlider" class="CSSlider" type="range"></input>
+	<svg protoId="UIIconCross" viewBox="0 0 24 24">
+		<path d="M1 1 L23 23 M23 1 L1 23" stroke-width="4"></path>
+	</svg>
+	<svg protoId="UIIconMinus" viewBox="0 0 24 24">
+		<path d="M0 12 L24 12" stroke-width="2"></path>
+	</svg>
+	<svg protoId="UIIconPlus" viewBox="0 0 24 24">
+		<path d="M0 12 L24 12 M12 0 L12 24" stroke-width="2"></path>
+	</svg>
+</div>
+<script src="/js/popup.js"></script>

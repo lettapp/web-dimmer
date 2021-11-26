@@ -1,0 +1,49 @@
+{
+    "manifest_version": 3,
+    "version": "3.13",
+    "name": "Lett Web Dimmer",
+    "description": "Adjust brightness level on any website.",
+    "icons": {
+        "32": "/assets/icon32.png",
+        "128": "/assets/icon.png"
+    },
+    "offline_enabled": true,
+    "permissions": [
+        "storage",
+        "scripting"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "content_scripts": [
+        {
+            "run_at": "document_start",
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "js/content.js"
+            ]
+        }
+    ],
+    "background": {
+        "service_worker": "worker.js"
+    },
+    "action": {
+        "default_popup": "/popup/main.html"
+    },
+    "commands": {
+        "increase": {
+            "suggested_key": {
+                "default": "Alt+W"
+            },
+            "description": "Go Darker"
+        },
+        "decrease": {
+            "suggested_key": {
+                "default": "Alt+Q"
+            },
+            "description": "Go Lighter"
+        }
+    }
+}
