@@ -13,6 +13,22 @@ const AUTO_DIS	= 0;
 const AUTO_IMG	= 1;
 const AUTO_RGB	= 2;
 
+function RuntimeMessage(kind, data)
+{
+	const message = {kind, data};
+
+	return new Promise(
+		callback => chrome.runtime.sendMessage(message, callback)
+	);
+}
+
+function FrameMessage(kind, data)
+{
+	chrome.runtime.sendMessage({kind, data},
+		e => chrome.runtime.lastError
+	);
+}
+
 function Float(float, p = 2)
 {
 	return +(float).toPrecision(p);
@@ -31,19 +47,6 @@ function FloatCmp(a, b, mode = 0)
 	}
 }
 
-function RuntimeMessage(kind, data, isAsync = true)
-{
-	const message = {kind, data, isAsync};
-
-	if (!isAsync) {
-		return chrome.runtime.sendMessage(message);
-	}
-
-	return new Promise(
-		callback => chrome.runtime.sendMessage(message, callback)
-	);
-}
-
 function Range(min, max, step, value)
 {
 	return {min, max, step, value};
@@ -51,14 +54,14 @@ function Range(min, max, step, value)
 
 class std
 {
-	static isNull(var_)
+	static isNull(x)
 	{
-		return var_ == null;
+		return x == null;
 	}
 
-	static define(var_, default_)
+	static define(x, initVal)
 	{
-		return this.isNull(var_) ? default_ : var_;
+		return this.isNull(x) ? initVal : x;
 	}
 
 	static clamp(n, min, max)
@@ -97,19 +100,16 @@ class string
 
 class storage
 {
-	static get(key, default_)
+	static get(key, initVal)
 	{
-		return new Promise(resolve =>
+		return this.namespace.get(key).then(r =>
 		{
-			chrome.storage.local.get(key, r =>
+			if (typeof key == 'string')
 			{
-				if (typeof key == 'string')
-				{
-					r = std.define(r[key], default_);
-				}
+				r = std.define(r[key], initVal);
+			}
 
-				resolve(r);
-			});
+			return r;
 		});
 	}
 
@@ -120,24 +120,25 @@ class storage
 			key = {[key]:val};
 		}
 
-		return new Promise(done => {
-			chrome.storage.local.set(key, done);
-		});
+		return this.namespace.set(key);
 	}
 
 	static remove(key)
 	{
-		return new Promise(done => {
-			chrome.storage.local.remove(key, done);
-		});
+		return this.namespace.remove(key);
 	}
 
 	static clear()
 	{
-		return new Promise(done => {
-			chrome.storage.local.clear(done);
-		});
+		return this.namespace.clear();
 	}
+
+	static getAll(fn)
+	{
+		this.namespace.get(null).then(fn);
+	}
+
+	static namespace = chrome.storage.local;
 }
 
 class sync
@@ -217,23 +218,20 @@ class sync
 		});
 	}
 
-	static init()
+	static init(fn)
 	{
 		const a = {
-			g:0,
-			auto:{},
+			g:0, auto:{}
 		};
 
-		return storage.get(null).then(c =>
+		storage.getAll(b =>
 		{
-			const b = {};
-
 			for (const k in a)
 			{
-				!(k in c) && (b[k] = a[k]);
+				if (k in b) delete a[k];
 			}
 
-			return storage.set(b);
+			storage.set(a).then(fn);
 		});
 	}
 }
@@ -303,10 +301,6 @@ class Main
 			this.onInstalled.bind(this)
 		);
 
-		chrome.runtime.onInstalled.addListener(
-			this.onUpdated.bind(this)
-		);
-
 		chrome.commands.onCommand.addListener(
 			this.onCommand.bind(this)
 		);
@@ -316,16 +310,11 @@ class Main
 		);
 	}
 
-	onInstalled(d)
+	onInstalled()
 	{
-		setTimeout(
-			_ => tabs.execContentScript(), 100
+		sync.init(
+			_ => tabs.execContentScript()
 		);
-	}
-
-	onUpdated(d)
-	{
-		sync.init();
 	}
 
 	onStartup()
@@ -361,7 +350,7 @@ class Main
 
 				sync.unsetAuto(host);
 
-				RuntimeMessage('autoModeDisabled', host, false);
+				FrameMessage('autoModeDisabled', host);
 			}
 			else {
 				level = Float(
@@ -370,7 +359,7 @@ class Main
 
 				sync.set(level, local, host);
 
-				RuntimeMessage('levelDidChange', level, false);
+				FrameMessage('levelDidChange', level);
 			}
 		});
 	}

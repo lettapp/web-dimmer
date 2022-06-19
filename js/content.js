@@ -13,6 +13,22 @@ const AUTO_DIS	= 0;
 const AUTO_IMG	= 1;
 const AUTO_RGB	= 2;
 
+function RuntimeMessage(kind, data)
+{
+	const message = {kind, data};
+
+	return new Promise(
+		callback => chrome.runtime.sendMessage(message, callback)
+	);
+}
+
+function FrameMessage(kind, data)
+{
+	chrome.runtime.sendMessage({kind, data},
+		e => chrome.runtime.lastError
+	);
+}
+
 function Float(float, p = 2)
 {
 	return +(float).toPrecision(p);
@@ -31,19 +47,6 @@ function FloatCmp(a, b, mode = 0)
 	}
 }
 
-function RuntimeMessage(kind, data, isAsync = true)
-{
-	const message = {kind, data, isAsync};
-
-	if (!isAsync) {
-		return chrome.runtime.sendMessage(message);
-	}
-
-	return new Promise(
-		callback => chrome.runtime.sendMessage(message, callback)
-	);
-}
-
 function Range(min, max, step, value)
 {
 	return {min, max, step, value};
@@ -51,14 +54,14 @@ function Range(min, max, step, value)
 
 class std
 {
-	static isNull(var_)
+	static isNull(x)
 	{
-		return var_ == null;
+		return x == null;
 	}
 
-	static define(var_, default_)
+	static define(x, initVal)
 	{
-		return this.isNull(var_) ? default_ : var_;
+		return this.isNull(x) ? initVal : x;
 	}
 
 	static clamp(n, min, max)
@@ -97,19 +100,16 @@ class string
 
 class storage
 {
-	static get(key, default_)
+	static get(key, initVal)
 	{
-		return new Promise(resolve =>
+		return this.namespace.get(key).then(r =>
 		{
-			chrome.storage.local.get(key, r =>
+			if (typeof key == 'string')
 			{
-				if (typeof key == 'string')
-				{
-					r = std.define(r[key], default_);
-				}
+				r = std.define(r[key], initVal);
+			}
 
-				resolve(r);
-			});
+			return r;
 		});
 	}
 
@@ -120,24 +120,25 @@ class storage
 			key = {[key]:val};
 		}
 
-		return new Promise(done => {
-			chrome.storage.local.set(key, done);
-		});
+		return this.namespace.set(key);
 	}
 
 	static remove(key)
 	{
-		return new Promise(done => {
-			chrome.storage.local.remove(key, done);
-		});
+		return this.namespace.remove(key);
 	}
 
 	static clear()
 	{
-		return new Promise(done => {
-			chrome.storage.local.clear(done);
-		});
+		return this.namespace.clear();
 	}
+
+	static getAll(fn)
+	{
+		this.namespace.get(null).then(fn);
+	}
+
+	static namespace = chrome.storage.local;
 }
 
 class sync
@@ -217,23 +218,20 @@ class sync
 		});
 	}
 
-	static init()
+	static init(fn)
 	{
 		const a = {
-			g:0,
-			auto:{},
+			g:0, auto:{}
 		};
 
-		return storage.get(null).then(c =>
+		storage.getAll(b =>
 		{
-			const b = {};
-
 			for (const k in a)
 			{
-				!(k in c) && (b[k] = a[k]);
+				if (k in b) delete a[k];
 			}
 
-			return storage.set(b);
+			storage.set(a).then(fn);
 		});
 	}
 }
@@ -270,25 +268,27 @@ class Notifications
 
 class Layer
 {
-	interv = 0;
-
 	constructor()
 	{
 		const el = document.createElement('web-dimmer');
 
-		el.style.position = 'fixed';
-		el.style.top = 0;
-		el.style.left = 0;
-		el.style.right = 0;
-		el.style.bottom = 0;
-		el.style.opacity = 0;
-		el.style.zIndex = 2147483647;
-		el.style.backgroundColor = '#000';
-		el.style.pointerEvents = 'none';
+		Object.assign(el.style, {
+			position:'fixed',
+			top:0,
+			left:0,
+			right:0,
+			bottom:0,
+			opacity:0,
+			zIndex:2147483647,
+			backgroundColor:'#000',
+			pointerEvents:'none',
+		});
 
 		this.append(
 			this.el = el
 		);
+
+		this.interv = 0;
 	}
 
 	adjust(level, animate)
@@ -346,21 +346,20 @@ class Main
 		if (document.documentElement.nodeName != 'HTML') {
 			return;
 		}
-		else {
-			this.observeMutations();
 
-			chrome.storage.onChanged.addListener(
-				this.onChange.bind(this)
-			);
-		}
-
-		this.layer = new Layer;
+		this.observeMutations();
 
 		this.load = new Promise(r => this.didLoad = r);
 
 		this.host = location.host || string.last('/', location.pathname);
 
+		this.layer = new Layer;
+
 		this.init();
+
+		chrome.storage.onChanged.addListener(
+			this.onChange.bind(this)
+		);
 	}
 
 	init(reinit)
@@ -391,7 +390,7 @@ class Main
 	{
 		if (document.body)
 		{
-			const mode = this.autoImgTest() || this.autoHexTest();
+			const mode = this.getAutoMode();
 
 			this.load.then(
 				_ => mode && this.autoDisable(mode)
@@ -437,16 +436,14 @@ class Main
 
 	autoAdjust(level)
 	{
-		this.adjust(level) & this.didLoad();
+		this.adjust(level) & this.didLoad(true);
 	}
 
 	autoDisable(mode)
 	{
 		this.adjust(0);
 
-		this.auto = mode;
-
-		sync.setAuto(this.host, mode);
+		sync.setAuto(this.host, this.auto = mode);
 	}
 
 	adjust(level, animate)
@@ -454,14 +451,23 @@ class Main
 		this.layer.adjust(level, animate);
 	}
 
-	autoImgTest()
+	getAutoMode()
 	{
-		const body = document.body.children;
+		const doctype = document.contentType;
 
-		if (body.length == 1 && body[0].nodeName == 'IMG')
-		{
+		if (doctype == 'application/pdf') {
+			return AUTO_NON;
+		}
+
+		if (doctype.startsWith('image')) {
 			return AUTO_IMG;
 		}
+
+		if (this.autoHexTest()) {
+			return AUTO_RGB;
+		}
+
+		return AUTO_NON;
 	}
 
 	autoHexTest()
@@ -480,10 +486,7 @@ class Main
 			);
 		});
 
-		if (Math.min(...hex) < 0xbbbbbb)
-		{
-			return AUTO_RGB;
-		}
+		return Math.min(...hex) < 0xbbbbbb;
 	}
 
 	observeMutations()
