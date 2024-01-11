@@ -13,22 +13,6 @@ const AUTO_DIS	= 0;
 const AUTO_IMG	= 1;
 const AUTO_RGB	= 2;
 
-function RuntimeMessage(kind, data)
-{
-	const message = {kind, data};
-
-	return new Promise(
-		callback => chrome.runtime.sendMessage(message, callback)
-	);
-}
-
-function FrameMessage(kind, data)
-{
-	chrome.runtime.sendMessage({kind, data},
-		e => chrome.runtime.lastError
-	);
-}
-
 function Float(float, p = 2)
 {
 	return +(float).toPrecision(p);
@@ -52,29 +36,26 @@ function Range(min, max, step, value)
 	return {min, max, step, value};
 }
 
-class std
+class is
 {
-	static isNull(x)
+	static null(x)
 	{
 		return x == null;
 	}
 
-	static define(x, initVal)
+	static boolean(x)
 	{
-		return this.isNull(x) ? initVal : x;
+		return this.type(x) == Boolean;
 	}
 
-	static clamp(n, min, max)
+	static string(x)
 	{
-		return n < min ? min : n > max ? max : n;
+		return this.type(x) == String;
 	}
-}
 
-class array
-{
-	static cast(x)
+	static type(x)
 	{
-		return x instanceof Array ? x : [x];
+		return x != null && x.constructor;
 	}
 }
 
@@ -96,17 +77,86 @@ class string
 	{
 		return str.split(after).pop();
 	}
+
+	static on(s)
+	{
+		return 'on' + s[0].toUpperCase() + s.slice(1);
+	}
+}
+
+class array
+{
+	static cast(x)
+	{
+		return x instanceof Array ? x : [x];
+	}
+}
+
+class math
+{
+	static bound(n, min, max)
+	{
+		return n < min ? min : n > max ? max : n;
+	}
+}
+
+class Messenger
+{
+	constructor(waitLoad)
+	{
+		this.waitLoad = waitLoad || Promise.resolve();
+
+		chrome.runtime.onMessage.addListener(
+			this.onMessage.bind(this)
+		);
+	}
+
+	async sendMessage(message, tabId)
+	{
+		const callback = this.onCallback.bind(this);
+
+		if (tabId) {
+			return chrome.tabs.sendMessage(tabId, message).catch(e => null);
+		}
+
+		try {
+			return chrome.runtime.sendMessage(message).then(callback).catch(e => null);
+		}
+		catch (e) {
+			this.onContextInvalidated?.();
+		}
+	}
+
+	onMessage(message, sender, callback)
+	{
+		let [kind, data] = Object.entries(message).pop();
+
+		kind = string.on(kind);
+
+		if (kind in this)
+		{
+			this.waitLoad.then(
+				_ => this[kind](data, sender.tab, callback)
+			);
+
+			return true;
+		}
+	}
+
+	onCallback(response)
+	{
+		return this.waitLoad.then(_ => response);
+	}
 }
 
 class storage
 {
 	static get(key, initVal)
 	{
-		return this.namespace.get(key).then(r =>
+		return this.ns.get(key).then(r =>
 		{
-			if (typeof key == 'string')
-			{
-				r = std.define(r[key], initVal);
+			if (is.string(key)) {
+				return r[key] ?? initVal;
 			}
 
 			return r;
@@ -115,48 +165,41 @@ class storage
 
 	static set(key, val)
 	{
-		if (typeof key == 'string')
-		{
+		if (is.string(key)) {
 			key = {[key]:val};
 		}
 
-		return this.namespace.set(key);
+		return this.ns.set(key);
 	}
 
 	static remove(key)
 	{
-		return this.namespace.remove(key);
+		return this.ns.remove(key);
 	}
 
 	static clear()
 	{
-		return this.namespace.clear();
+		return this.ns.clear();
 	}
 
-	static getAll(fn)
-	{
-		this.namespace.get(null).then(fn);
-	}
-
-	static namespace = chrome.storage.local;
+	static ns = chrome.storage.local;
 }
 
 class sync
 {
-	static load(host, fn)
+	static load(host, callback)
 	{
-		storage.get([host, 'g', 'auto']).then(d =>
+		return storage.get([host, 'g', 'auto']).then(d =>
 		{
 			let a = d.g,
-				b = false,
-				c = std.define(d.auto[host], AUTO_NON);
+				b = host in d,
+				c = d.auto[host] ?? AUTO_NON;
 
-			if (d[host] >= 0) {
+			if (b) {
 				a = d[host];
-				b = true;
 			}
 
-			fn(a, b, c);
+			return callback(a, b, c);
 		});
 	}
 
@@ -165,9 +208,13 @@ class sync
 		return storage.get(host, 0);
 	}
 
-	static set(value, local, host)
+	static set(level, local, host)
 	{
-		storage.set(local ? host : 'g', value);
+		if (!local) {
+			host = 'g';
+		}
+
+		storage.set(host, level);
 	}
 
 	static unset(host)
@@ -180,16 +227,16 @@ class sync
 		return storage.get('g').then(fn);
 	}
 
-	static setAuto(host, newVal)
+	static setAuto(host, mode)
 	{
 		storage.get('auto').then(auto =>
 		{
-			if (auto[host] == AUTO_RGB && newVal == AUTO_NON)
+			if (mode == AUTO_NON && auto[host] == AUTO_RGB)
 			{
 				auto[host] = AUTO_DIS;
 			}
 			else {
-				auto[host] = newVal;
+				auto[host] = mode;
 			}
 
 			storage.set({auto});
@@ -203,7 +250,7 @@ class sync
 
 	static cleanAuto()
 	{
-		storage.get(null).then(d =>
+		storage.get().then(d =>
 		{
 			const auto = d.auto;
 
@@ -221,10 +268,10 @@ class sync
 	static init(fn)
 	{
 		const a = {
-			g:0, auto:{}
+			auto:{}, g:0.14
 		};
 
-		storage.getAll(b =>
+		storage.get().then(b =>
 		{
 			for (const k in a)
 			{
@@ -238,19 +285,12 @@ class sync
 
 class tabs
 {
-	static getActive(fn)
-	{
-		chrome.tabs.query(
-			{active:true, currentWindow:true}, tabs => fn(tabs[0])
-		);
-	}
-
 	static execContentScript()
 	{
-		chrome.tabs.query({}, tabs =>
-		{
-			const files = chrome.runtime.getManifest().content_scripts[0].js;
+		const files = chrome.runtime.getManifest().content_scripts[0].js;
 
+		this.query({}, tabs =>
+		{
 			for (const tab of tabs)
 			{
 				if (!this.isScriptable(tab.url)) {
@@ -267,12 +307,18 @@ class tabs
 		});
 	}
 
+	static getActive(callback)
+	{
+		this.query({active:true, currentWindow:true},
+			tabs => callback(tabs[0])
+		);
+	}
+
 	static isScriptable(url = 'chrome://newtab')
 	{
 		url = new URL(url);
 
-		if (url.protocol != 'chrome:' && !url.href.includes('chrome.google.com/webstore'))
-		{
+		if (url.protocol != 'chrome:' && url.host != 'chromewebstore.google.com') {
 			return url;
 		}
 	}
@@ -283,20 +329,26 @@ class tabs
 
 		if (url)
 		{
-			if (url.protocol == 'file:')
-			{
+			if (url.protocol == 'file:') {
 				return string.last('/', url.pathname);
 			}
 
 			return url.host;
 		}
 	}
+
+	static query(p, callback)
+	{
+		chrome.tabs.query(p).then(callback);
+	}
 }
 
-class Main
+class App extends Messenger
 {
 	constructor()
 	{
+		super();
+
 		self.addEventListener('install',
 			this.onInstalled.bind(this)
 		);
@@ -350,19 +402,19 @@ class Main
 
 				sync.unsetAuto(host);
 
-				FrameMessage('autoModeDisabled', host);
+				this.sendMessage({autoModeDisabled:host});
 			}
 			else {
 				level = Float(
-					std.clamp(level + chg, MIN_LEVEL, MAX_LEVEL)
+					math.bound(level + chg, MIN_LEVEL, MAX_LEVEL)
 				);
 
 				sync.set(level, local, host);
 
-				FrameMessage('levelDidChange', level);
+				this.sendMessage({levelDidChange:level});
 			}
 		});
 	}
 }
 
-new Main;
+let app = new App;

@@ -13,22 +13,6 @@ const AUTO_DIS	= 0;
 const AUTO_IMG	= 1;
 const AUTO_RGB	= 2;
 
-function RuntimeMessage(kind, data)
-{
-	const message = {kind, data};
-
-	return new Promise(
-		callback => chrome.runtime.sendMessage(message, callback)
-	);
-}
-
-function FrameMessage(kind, data)
-{
-	chrome.runtime.sendMessage({kind, data},
-		e => chrome.runtime.lastError
-	);
-}
-
 function Float(float, p = 2)
 {
 	return +(float).toPrecision(p);
@@ -52,29 +36,26 @@ function Range(min, max, step, value)
 	return {min, max, step, value};
 }
 
-class std
+class is
 {
-	static isNull(x)
+	static null(x)
 	{
 		return x == null;
 	}
 
-	static define(x, initVal)
+	static boolean(x)
 	{
-		return this.isNull(x) ? initVal : x;
+		return this.type(x) == Boolean;
 	}
 
-	static clamp(n, min, max)
+	static string(x)
 	{
-		return n < min ? min : n > max ? max : n;
+		return this.type(x) == String;
 	}
-}
 
-class array
-{
-	static cast(x)
+	static type(x)
 	{
-		return x instanceof Array ? x : [x];
+		return x != null && x.constructor;
 	}
 }
 
@@ -96,17 +77,80 @@ class string
 	{
 		return str.split(after).pop();
 	}
+
+	static on(s)
+	{
+		return 'on' + s[0].toUpperCase() + s.slice(1);
+	}
+}
+
+class array
+{
+	static cast(x)
+	{
+		return x instanceof Array ? x : [x];
+	}
+}
+
+class math
+{
+	static bound(n, min, max)
+	{
+		return n < min ? min : n > max ? max : n;
+	}
+}
+
+class notifications
+{
+	static addListener(target, ids)
+	{
+		ids = ids.split(' ');
+
+		for (const id of ids)
+		{
+			this.getChannel(id).add(target);
+		}
+	}
+
+	static removeListener(target, ids)
+	{
+		if (ids) {
+			ids = ids.split(' ');
+		}
+		else {
+			ids = Object.keys(this.channels);
+		}
+
+		for (const id of ids)
+		{
+			this.getChannel(id).delete(target);
+		}
+	}
+
+	static send(id, data)
+	{
+		for (const target of this.getChannel(id))
+		{
+			target[string.on(id)](data);
+		}
+	}
+
+	static getChannel(id)
+	{
+		return this.channels[id] ||= new Set;
+	}
+
+	static channels = {};
 }
 
 class storage
 {
 	static get(key, initVal)
 	{
-		return this.namespace.get(key).then(r =>
+		return this.ns.get(key).then(r =>
 		{
-			if (typeof key == 'string')
-			{
-				r = std.define(r[key], initVal);
+			if (is.string(key)) {
+				return r[key] ?? initVal;
 			}
 
 			return r;
@@ -115,48 +159,41 @@ class storage
 
 	static set(key, val)
 	{
-		if (typeof key == 'string')
-		{
+		if (is.string(key)) {
 			key = {[key]:val};
 		}
 
-		return this.namespace.set(key);
+		return this.ns.set(key);
 	}
 
 	static remove(key)
 	{
-		return this.namespace.remove(key);
+		return this.ns.remove(key);
 	}
 
 	static clear()
 	{
-		return this.namespace.clear();
+		return this.ns.clear();
 	}
 
-	static getAll(fn)
-	{
-		this.namespace.get(null).then(fn);
-	}
-
-	static namespace = chrome.storage.local;
+	static ns = chrome.storage.local;
 }
 
 class sync
 {
-	static load(host, fn)
+	static load(host, callback)
 	{
-		storage.get([host, 'g', 'auto']).then(d =>
+		return storage.get([host, 'g', 'auto']).then(d =>
 		{
 			let a = d.g,
-				b = false,
-				c = std.define(d.auto[host], AUTO_NON);
+				b = host in d,
+				c = d.auto[host] ?? AUTO_NON;
 
-			if (d[host] >= 0) {
+			if (b) {
 				a = d[host];
-				b = true;
 			}
 
-			fn(a, b, c);
+			return callback(a, b, c);
 		});
 	}
 
@@ -165,9 +202,13 @@ class sync
 		return storage.get(host, 0);
 	}
 
-	static set(value, local, host)
+	static set(level, local, host)
 	{
-		storage.set(local ? host : 'g', value);
+		if (!local) {
+			host = 'g';
+		}
+
+		storage.set(host, level);
 	}
 
 	static unset(host)
@@ -180,16 +221,16 @@ class sync
 		return storage.get('g').then(fn);
 	}
 
-	static setAuto(host, newVal)
+	static setAuto(host, mode)
 	{
 		storage.get('auto').then(auto =>
 		{
-			if (auto[host] == AUTO_RGB && newVal == AUTO_NON)
+			if (mode == AUTO_NON && auto[host] == AUTO_RGB)
 			{
 				auto[host] = AUTO_DIS;
 			}
 			else {
-				auto[host] = newVal;
+				auto[host] = mode;
 			}
 
 			storage.set({auto});
@@ -203,7 +244,7 @@ class sync
 
 	static cleanAuto()
 	{
-		storage.get(null).then(d =>
+		storage.get().then(d =>
 		{
 			const auto = d.auto;
 
@@ -221,10 +262,10 @@ class sync
 	static init(fn)
 	{
 		const a = {
-			g:0, auto:{}
+			auto:{}, g:0.14
 		};
 
-		storage.getAll(b =>
+		storage.get().then(b =>
 		{
 			for (const k in a)
 			{
@@ -234,36 +275,6 @@ class sync
 			storage.set(a).then(fn);
 		});
 	}
-}
-
-class Notifications
-{
-	static addListener(target, id)
-	{
-		this.targets(id).add(target);
-	}
-
-	static removeListener(target, id)
-	{
-		this.targets(id).delete(target);
-	}
-
-	static send(id, data)
-	{
-		const handler = 'on' + id;
-
-		for (const target of this.targets(id))
-		{
-			target[handler].call(target, data);
-		}
-	}
-
-	static targets(id)
-	{
-		return this.events[id] ||= new Set;
-	}
-
-	static events = {};
 }
 
 class Layer
@@ -300,7 +311,7 @@ class Layer
 			el.transition = 'opacity 200ms';
 
 			setTimeout(
-				f => el.transition = '', 250
+				_ => el.transition = '', 200
 			);
 		}
 
@@ -327,19 +338,19 @@ class Layer
 		document.documentElement.appendChild(this.el);
 
 		if (initial) {
-			Notifications.addListener(this, 'Mutation');
+			notifications.addListener(this, 'Mutation');
 		}
 	}
 
 	remove()
 	{
-		Notifications.removeListener(this, 'Mutation');
+		notifications.removeListener(this, 'Mutation');
 
 		this.el.remove();
 	}
 }
 
-class Main
+class App
 {
 	constructor()
 	{
@@ -347,24 +358,22 @@ class Main
 			return;
 		}
 
-		this.observeMutations();
-
-		this.load = new Promise(r => this.didLoad = r);
-
 		this.host = location.host || string.last('/', location.pathname);
 
 		this.layer = new Layer;
 
-		this.init();
+		this.load = this.init();
 
 		chrome.storage.onChanged.addListener(
 			this.onChange.bind(this)
 		);
+
+		this.observeMutations();
 	}
 
 	init(reinit)
 	{
-		sync.load(this.host, (level, local, auto) =>
+		return sync.load(this.host, (level, local, auto) =>
 		{
 			Object.assign(this, {local, auto});
 
@@ -375,7 +384,7 @@ class Main
 			switch (auto)
 			{
 				case AUTO_NON:
-					return this.autoAdjust(level);
+					return !this.adjust(level);
 
 				case AUTO_DIS:
 					return this.adjust(level);
@@ -393,10 +402,10 @@ class Main
 			const mode = this.getAutoMode();
 
 			this.load.then(
-				_ => mode && this.autoDisable(mode)
+				calc => calc && mode && this.autoDisable(mode)
 			);
 
-			Notifications.removeListener(this, 'Mutation');
+			notifications.removeListener(this, 'Mutation');
 		}
 	}
 
@@ -415,7 +424,7 @@ class Main
 
 		if (c = d[host])
 		{
-			const modeChange = [c.oldValue, c.newValue].some(std.isNull);
+			const modeChange = [c.oldValue, c.newValue].some(is.null);
 
 			if (modeChange) {
 				return this.init(true);
@@ -434,14 +443,9 @@ class Main
 		}
 	}
 
-	autoAdjust(level)
+	autoDisable(mode, animate)
 	{
-		this.adjust(level) & this.didLoad(true);
-	}
-
-	autoDisable(mode)
-	{
-		this.adjust(0);
+		this.adjust(0, animate);
 
 		sync.setAuto(this.host, this.auto = mode);
 	}
@@ -466,6 +470,11 @@ class Main
 		if (this.autoHexTest()) {
 			return AUTO_RGB;
 		}
+		else {
+			setTimeout(
+				_ => this.autoHexTest() && this.autoDisable(AUTO_RGB, true),
+			1e3);
+		}
 
 		return AUTO_NON;
 	}
@@ -474,10 +483,9 @@ class Main
 	{
 		const hex = [document.documentElement, document.body].map(node =>
 		{
-			let rgb = string.match(/\d+/g, getComputedStyle(node).backgroundColor);
+			let rgb = string.match(/\d+/g, getComputedStyle(node).backgroundColor).map(Number);
 
-			if (rgb.length != 3)
-			{
+			if (rgb.length != 3) {
 				rgb = [255, 255, 255];
 			}
 
@@ -492,15 +500,15 @@ class Main
 	observeMutations()
 	{
 		const observer = new MutationObserver(
-			mutations => Notifications.send('Mutation', mutations)
+			mutations => notifications.send('Mutation', mutations)
 		);
 
 		observer.observe(
 			document.documentElement, {childList:true}
 		);
 
-		Notifications.addListener(this, 'Mutation');
+		notifications.addListener(this, 'Mutation');
 	}
 }
 
-new Main;
+let app = new App;

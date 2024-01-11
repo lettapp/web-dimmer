@@ -13,22 +13,6 @@ const AUTO_DIS	= 0;
 const AUTO_IMG	= 1;
 const AUTO_RGB	= 2;
 
-function RuntimeMessage(kind, data)
-{
-	const message = {kind, data};
-
-	return new Promise(
-		callback => chrome.runtime.sendMessage(message, callback)
-	);
-}
-
-function FrameMessage(kind, data)
-{
-	chrome.runtime.sendMessage({kind, data},
-		e => chrome.runtime.lastError
-	);
-}
-
 function Float(float, p = 2)
 {
 	return +(float).toPrecision(p);
@@ -52,29 +36,26 @@ function Range(min, max, step, value)
 	return {min, max, step, value};
 }
 
-class std
+class is
 {
-	static isNull(x)
+	static null(x)
 	{
 		return x == null;
 	}
 
-	static define(x, initVal)
+	static boolean(x)
 	{
-		return this.isNull(x) ? initVal : x;
+		return this.type(x) == Boolean;
 	}
 
-	static clamp(n, min, max)
+	static string(x)
 	{
-		return n < min ? min : n > max ? max : n;
+		return this.type(x) == String;
 	}
-}
 
-class array
-{
-	static cast(x)
+	static type(x)
 	{
-		return x instanceof Array ? x : [x];
+		return x != null && x.constructor;
 	}
 }
 
@@ -96,17 +77,129 @@ class string
 	{
 		return str.split(after).pop();
 	}
+
+	static on(s)
+	{
+		return 'on' + s[0].toUpperCase() + s.slice(1);
+	}
+}
+
+class array
+{
+	static cast(x)
+	{
+		return x instanceof Array ? x : [x];
+	}
+}
+
+class math
+{
+	static bound(n, min, max)
+	{
+		return n < min ? min : n > max ? max : n;
+	}
+}
+
+class Messenger
+{
+	constructor(waitLoad)
+	{
+		this.waitLoad = waitLoad || Promise.resolve();
+
+		chrome.runtime.onMessage.addListener(
+			this.onMessage.bind(this)
+		);
+	}
+
+	async sendMessage(message, tabId)
+	{
+		const callback = this.onCallback.bind(this);
+
+		if (tabId) {
+			return chrome.tabs.sendMessage(tabId, message).catch(e => null);
+		}
+
+		try {
+			return chrome.runtime.sendMessage(message).then(callback).catch(e => null);
+		}
+		catch (e) {
+			this.onContextInvalidated?.();
+		}
+	}
+
+	onMessage(message, sender, callback)
+	{
+		let [kind, data] = Object.entries(message).pop();
+
+		kind = string.on(kind);
+
+		if (kind in this)
+		{
+			this.waitLoad.then(
+				_ => this[kind](data, sender.tab, callback)
+			);
+
+			return true;
+		}
+	}
+
+	onCallback(response)
+	{
+		return this.waitLoad.then(_ => response);
+	}
+}
+
+class notifications
+{
+	static addListener(target, ids)
+	{
+		ids = ids.split(' ');
+
+		for (const id of ids)
+		{
+			this.getChannel(id).add(target);
+		}
+	}
+
+	static removeListener(target, ids)
+	{
+		if (ids) {
+			ids = ids.split(' ');
+		}
+		else {
+			ids = Object.keys(this.channels);
+		}
+
+		for (const id of ids)
+		{
+			this.getChannel(id).delete(target);
+		}
+	}
+
+	static send(id, data)
+	{
+		for (const target of this.getChannel(id))
+		{
+			target[string.on(id)](data);
+		}
+	}
+
+	static getChannel(id)
+	{
+		return this.channels[id] ||= new Set;
+	}
+
+	static channels = {};
 }
 
 class storage
 {
 	static get(key, initVal)
 	{
-		return this.namespace.get(key).then(r =>
+		return this.ns.get(key).then(r =>
 		{
-			if (typeof key == 'string')
-			{
-				r = std.define(r[key], initVal);
+			if (is.string(key)) {
+				return r[key] ?? initVal;
 			}
 
 			return r;
@@ -115,48 +208,41 @@ class storage
 
 	static set(key, val)
 	{
-		if (typeof key == 'string')
-		{
+		if (is.string(key)) {
 			key = {[key]:val};
 		}
 
-		return this.namespace.set(key);
+		return this.ns.set(key);
 	}
 
 	static remove(key)
 	{
-		return this.namespace.remove(key);
+		return this.ns.remove(key);
 	}
 
 	static clear()
 	{
-		return this.namespace.clear();
+		return this.ns.clear();
 	}
 
-	static getAll(fn)
-	{
-		this.namespace.get(null).then(fn);
-	}
-
-	static namespace = chrome.storage.local;
+	static ns = chrome.storage.local;
 }
 
 class sync
 {
-	static load(host, fn)
+	static load(host, callback)
 	{
-		storage.get([host, 'g', 'auto']).then(d =>
+		return storage.get([host, 'g', 'auto']).then(d =>
 		{
 			let a = d.g,
-				b = false,
-				c = std.define(d.auto[host], AUTO_NON);
+				b = host in d,
+				c = d.auto[host] ?? AUTO_NON;
 
-			if (d[host] >= 0) {
+			if (b) {
 				a = d[host];
-				b = true;
 			}
 
-			fn(a, b, c);
+			return callback(a, b, c);
 		});
 	}
 
@@ -165,9 +251,13 @@ class sync
 		return storage.get(host, 0);
 	}
 
-	static set(value, local, host)
+	static set(level, local, host)
 	{
-		storage.set(local ? host : 'g', value);
+		if (!local) {
+			host = 'g';
+		}
+
+		storage.set(host, level);
 	}
 
 	static unset(host)
@@ -180,16 +270,16 @@ class sync
 		return storage.get('g').then(fn);
 	}
 
-	static setAuto(host, newVal)
+	static setAuto(host, mode)
 	{
 		storage.get('auto').then(auto =>
 		{
-			if (auto[host] == AUTO_RGB && newVal == AUTO_NON)
+			if (mode == AUTO_NON && auto[host] == AUTO_RGB)
 			{
 				auto[host] = AUTO_DIS;
 			}
 			else {
-				auto[host] = newVal;
+				auto[host] = mode;
 			}
 
 			storage.set({auto});
@@ -203,7 +293,7 @@ class sync
 
 	static cleanAuto()
 	{
-		storage.get(null).then(d =>
+		storage.get().then(d =>
 		{
 			const auto = d.auto;
 
@@ -221,10 +311,10 @@ class sync
 	static init(fn)
 	{
 		const a = {
-			g:0, auto:{}
+			auto:{}, g:0.14
 		};
 
-		storage.getAll(b =>
+		storage.get().then(b =>
 		{
 			for (const k in a)
 			{
@@ -238,19 +328,12 @@ class sync
 
 class tabs
 {
-	static getActive(fn)
-	{
-		chrome.tabs.query(
-			{active:true, currentWindow:true}, tabs => fn(tabs[0])
-		);
-	}
-
 	static execContentScript()
 	{
-		chrome.tabs.query({}, tabs =>
-		{
-			const files = chrome.runtime.getManifest().content_scripts[0].js;
+		const files = chrome.runtime.getManifest().content_scripts[0].js;
 
+		this.query({}, tabs =>
+		{
 			for (const tab of tabs)
 			{
 				if (!this.isScriptable(tab.url)) {
@@ -267,12 +350,18 @@ class tabs
 		});
 	}
 
+	static getActive(callback)
+	{
+		this.query({active:true, currentWindow:true},
+			tabs => callback(tabs[0])
+		);
+	}
+
 	static isScriptable(url = 'chrome://newtab')
 	{
 		url = new URL(url);
 
-		if (url.protocol != 'chrome:' && !url.href.includes('chrome.google.com/webstore'))
-		{
+		if (url.protocol != 'chrome:' && url.host != 'chromewebstore.google.com') {
 			return url;
 		}
 	}
@@ -283,13 +372,17 @@ class tabs
 
 		if (url)
 		{
-			if (url.protocol == 'file:')
-			{
+			if (url.protocol == 'file:') {
 				return string.last('/', url.pathname);
 			}
 
 			return url.host;
 		}
+	}
+
+	static query(p, callback)
+	{
+		chrome.tabs.query(p).then(callback);
 	}
 }
 
@@ -320,31 +413,43 @@ class UIFactory
 	{
 		return this.protos[id].cloneNode(true);
 	}
+
+	extend(a, b)
+	{
+		for (const k in b)
+		{
+			if (k in a) {
+				a[k] = a[k].concat(' ', b[k]);
+			}
+			else {
+				a[k] = b[k];
+			}
+		}
+
+		return a;
+	}
 }
 
 class UIResponder
 {
-	isChildOf(viewController)
+	setParent(viewController)
 	{
 		this.parent = viewController;
 	}
 
-	handleAction(action, sender)
+	handleAction(action, sender, data)
 	{
+		let nextResponder;
+
 		if (action in this && this != sender)
 		{
-			return this[action](sender);
+			return this[action](sender, data);
 		}
 
-		if (this.nextResponder)
+		if (nextResponder = this.parent || this.superview)
 		{
-			this.nextResponder.handleAction(action, sender);
+			return nextResponder.handleAction(action, sender, data);
 		}
-	}
-
-	get nextResponder()
-	{
-		return this.parent || this.superview;
 	}
 }
 
@@ -363,7 +468,7 @@ class ViewController extends UIResponder
 
 	setView(view, viewDelegate)
 	{
-		view.isChildOf(this);
+		view.setParent(this);
 
 		if (viewDelegate) {
 			view.delegate = new viewDelegate(this);
@@ -380,7 +485,7 @@ class ViewController extends UIResponder
 
 	addChild(child, viewTargetId)
 	{
-		child.isChildOf(this);
+		child.setParent(this);
 
 		this.children.push(child);
 
@@ -396,30 +501,46 @@ class UIElement extends UIResponder
 
 		this.element = UI.create(protoId);
 
-		this.import('style', 'hidden', 'addEventListener', 'setAttribute', 'querySelector', 'appendChild', 'textContent');
+		this.import('style hidden addEventListener setAttribute querySelector textContent');
 	}
 
-	import()
+	appendChild(child)
 	{
-		const e = this.element;
+		this.element.appendChild(child.element || child);
+	}
 
-		for (const x of arguments)
+	addClass(str)
+	{
+		this.element.classList.add(...str.split(' '));
+	}
+
+	delClass(str)
+	{
+		this.element.classList.remove(...str.split(' '));
+	}
+
+	import(methods)
+	{
+		methods = methods.split(' ');
+
+		for (const x of methods)
 		{
 			if (x in this) {
-				throw 'cannot redefine property';
+				throw Error('property already defined');
 			}
 
-			if (typeof e[x] == 'function')
+			if (this.element[x] instanceof Function)
 			{
-				this[x] = e[x].bind(e);
+				this[x] = this.element[x].bind(this.element);
 			}
 			else {
-				Object.defineProperty(this, x, {
+				Object.defineProperty(this, x,
+				{
 					get() {
-						return e[x];
+						return this.element[x];
 					},
 					set(v) {
-						e[x] = v;
+						this.element[x] = v;
 					}
 				});
 			}
@@ -429,22 +550,24 @@ class UIElement extends UIResponder
 
 class UIView extends UIElement
 {
-	constructor(protoId, init)
+	constructor(protoId, init = {})
 	{
 		super(protoId);
 
 		this.superview;
 		this.targets = {};
 
-		if (init) {
-			this.init(init);
-		}
+		this.init(init);
 	}
 
 	init(init)
 	{
 		if (init.import) {
-			this.import(...init.import);
+			this.import(init.import);
+		}
+
+		if (init.events) {
+			this.addListener(init.events);
 		}
 
 		if (init.target) {
@@ -452,7 +575,7 @@ class UIView extends UIElement
 		}
 
 		if (init.css) {
-			this.addClass(...init.css);
+			this.addClass(init.css);
 		}
 
 		if (init.text) {
@@ -464,16 +587,6 @@ class UIView extends UIElement
 				this.setAttribute(attr, init.attrs[attr]);
 			}
 		}
-	}
-
-	addClass()
-	{
-		this.element.classList.add(...arguments);
-	}
-
-	delClass()
-	{
-		this.element.classList.remove(...arguments);
 	}
 
 	remove()
@@ -492,7 +605,7 @@ class UIView extends UIElement
 				return this.element.prepend(view.element);
 
 			default:
-				return this.appendChild(view.element);
+				return this.appendChild(view);
 		}
 	}
 
@@ -504,35 +617,33 @@ class UIView extends UIElement
 		}
 	}
 
-	addTarget(target, action, events)
+	addTarget(target, events)
 	{
-		events = array.cast(events);
+		events = events.split(' ');
 
-		for (const event of events)
+		for (const eventAction of events)
 		{
-			const native = UIView.eventAlias(event);
+			const [event, action] = eventAction.split(':');
 
-			if (native) {
-				this.addListener(native, 'handleEvent');
-			}
+			this.eventTargets(event).set(target, action);
+		}
+	}
 
-			this.targetsFor(event).set(target, action);
+	addListener(events)
+	{
+		const handler = this.handleEvent.bind(this);
+
+		for (const event of events.split(' '))
+		{
+			this.addEventListener(event, handler);
 		}
 	}
 
 	handleEvent(e)
 	{
-		e.stopPropagation() & this[UIView.eventAlias(e.type)](e);
-	}
+		e.stopPropagation();
 
-	onClick()
-	{
-		this.sendAction('onClick');
-	}
-
-	addListener(event, method)
-	{
-		this.addEventListener(event, this[method].bind(this));
+		this[string.on(e.type)](e);
 	}
 
 	queryId(id)
@@ -540,36 +651,30 @@ class UIView extends UIElement
 		return this.querySelector('#' + id);
 	}
 
-	sendAction(event)
+	sendAction(event, data)
 	{
-		for (const [target, action] of this.targetsFor(event))
+		const targets = this.eventTargets(event);
+
+		if (targets.size)
 		{
-			target.handleAction(action, this);
+			for (const [target, action] of targets)
+			{
+				target.handleAction(action, this, data);
+			}
+		}
+		else {
+			this.superview?.handleAction(event, this, data);
 		}
 	}
 
-	targetsFor(event)
+	eventTargets(event)
 	{
 		return this.targets[event] ||= new Map;
 	}
 
-	static eventAlias(name)
+	onClick()
 	{
-		const obj = {
-			onClick:'click',
-			onPaste:'paste',
-			onKeyup:'keyup',
-			onEnter:'keyup',
-			onFocus:'focus',
-		};
-
-		for (const key in obj)
-		{
-			const val = obj[key];
-
-			if (key == name) return val;
-			if (val == name) return key;
-		}
+		this.sendAction('onClick');
 	}
 }
 
@@ -607,12 +712,14 @@ class UIStepper extends UIButton
 {
 	constructor(init)
 	{
-		super(init);
+		UI.extend(init, {
+			events:'pointerdown'
+		});
 
-		this.addListener('pointerdown', 'onPointerDown');
+		super(init);
 	}
 
-	onPointerDown()
+	onPointerdown()
 	{
 		this.didInvoke();
 
@@ -620,15 +727,13 @@ class UIStepper extends UIButton
 			this.invokedPid = setInterval(_ => this.didInvoke(), 20);
 		}, 450);
 
-		document.onpointerup = this.onPointerUp.bind(this);
-	}
+		window.onpointerup = _ =>
+		{
+			clearTimeout(this.pressedPid);
+			clearInterval(this.invokedPid);
 
-	onPointerUp()
-	{
-		clearTimeout(this.pressedPid);
-		clearInterval(this.invokedPid);
-
-		document.onpointerup = null;
+			window.onpointerup = null;
+		};
 	}
 
 	didInvoke()
@@ -639,20 +744,28 @@ class UIStepper extends UIButton
 
 class UISlider extends UIView
 {
-	constructor(init)
+	constructor(init )
 	{
-		init.import = ['min', 'max', 'step'];
+		UI.extend(init, {
+			import:'min max step',
+			events:'input'
+		});
 
 		super('UISlider', init);
 
 		Object.assign(this, init.range);
+	}
 
-		this.addListener('input', 'onChange');
+	onInput()
+	{
+		this.setBackground();
+
+		this.sendAction('onChange');
 	}
 
 	getValue()
 	{
-		if (this.animating) {
+		if (this.animId) {
 			return this.finalValue;
 		}
 
@@ -680,34 +793,24 @@ class UISlider extends UIView
 		this.setBackground();
 	}
 
-	get animating()
+	animate(val)
 	{
-		return this.pid;
-	}
+		const chg = Math.sign(val - this.value) * this.step;
 
-	animate(newVal)
-	{
-		const chg = Math.sign(newVal - this.value) * this.step;
+		if (this.animId) {
+			this.animateEnd();
+		}
 
-		this.animateEnd();
-
-		this.pid = setInterval(
-			_ => FloatCmp(this.value += chg, newVal) && this.animateEnd(), 5
+		this.animId = setInterval(
+			_ => FloatCmp(this.value += chg, val) && this.animateEnd(), 17
 		);
 
-		return Float(newVal);
+		return Float(val);
 	}
 
 	animateEnd()
 	{
-		this.pid = clearInterval(this.pid);
-	}
-
-	onChange()
-	{
-		this.setBackground();
-
-		this.sendAction('onChange');
+		this.animId = clearInterval(this.animId);
 	}
 
 	setBackground()
@@ -725,10 +828,12 @@ class UISlider extends UIView
 
 class UISwitch extends UISlider
 {
-	constructor(init)
+	constructor(init )
 	{
-		init.css = ['CSSwitch'];
-		init.range = Range(0, 1, 1, +init.isOn);
+		UI.extend(init, {
+			css:'CSSwitch',
+			range:Range(0, 1, 1, +init.isOn)
+		});
 
 		super(init);
 	}
@@ -741,6 +846,35 @@ class UISwitch extends UISlider
 	set isOn(bool)
 	{
 		this.value = +bool;
+	}
+}
+
+class AppController extends ViewController
+{
+	constructor()
+	{
+		super(
+			new UIView('UIDefault')
+		);
+	}
+
+	init(url)
+	{
+		const host = tabs.host(url);
+
+		if (host) {
+			this.addChild(
+				new AdjustView(host)
+			);
+		}
+		else {
+			this.addChild(new AboutView);
+		}
+	}
+
+	viewDidSet(view)
+	{
+		document.body.appendChild(view.element);
 	}
 }
 
@@ -776,9 +910,7 @@ class AdjustView extends ViewController
 
 		this.init(host);
 
-		chrome.runtime.onMessage.addListener(
-			this.onMessage.bind(this)
-		);
+		notifications.addListener(this, 'levelDidChange autoModeDisabled');
 	}
 
 	init(host, animate)
@@ -800,9 +932,9 @@ class AdjustView extends ViewController
 
 	set(level, animate)
 	{
-		this.onModeChange(
-			this.localLevel = this.level
-		);
+		this.localLevel = this.level;
+
+		this.onModeChange();
 
 		this.setLevel(level, animate);
 	}
@@ -852,18 +984,6 @@ class AdjustView extends ViewController
 		sync.set(this.level, this.local, this.host);
 	}
 
-	onChangeExternal(kind, data)
-	{
-		switch (kind)
-		{
-			case 'levelDidChange':
-				return this.setLevel(data);
-
-			case 'autoModeDisabled':
-				return this.init(data, true);
-		}
-	}
-
 	onModeChange()
 	{
 		let {local, auto, host} = this;
@@ -881,14 +1001,14 @@ class AdjustView extends ViewController
 			host = 'Global';
 		}
 
-		this.hostname.textContent = host;
+		this.domain.textContent = host;
 	}
 
 	disableAutoMode()
 	{
-		this.onModeChange(
-			this.auto = false
-		);
+		this.auto = false;
+
+		this.onModeChange();
 
 		sync.unsetAuto(this.host);
 	}
@@ -917,41 +1037,46 @@ class AdjustView extends ViewController
 	{
 		switch (this.auto)
 		{
-			case 1: return 'Image';
-			case 2: return 'Dark Site';
+			case AUTO_IMG: return 'Image';
+			case AUTO_RGB: return 'Dark Site';
 		}
 	}
 
-	onMessage({kind, data})
+	onLevelDidChange(newval)
 	{
-		this.onChangeExternal(kind, data);
+		this.setLevel(newval);
+	}
+
+	onAutoModeDisabled(host)
+	{
+		this.init(host, true);
 	}
 
 	viewDidSet(view)
 	{
+		const localSwitch = new UISwitch({
+			isOn:false,
+			target:[this, 'onChange:localSwitchClicked'],
+		});
+
 		const adjustUp = new UIStepper({
-			css:['CSAdjustButton'],
+			css:'CSAdjustButton',
 			image:'UIIconPlus',
-			target:[this, 'adjustButtonClicked', 'onInvoke'],
+			target:[this, 'onInvoke:adjustButtonClicked'],
 			value:+MAX_STEP,
 		});
 
 		const adjustDown = new UIStepper({
-			css:['CSAdjustButton'],
+			css:'CSAdjustButton',
 			image:'UIIconMinus',
-			target:[this, 'adjustButtonClicked', 'onInvoke'],
+			target:[this, 'onInvoke:adjustButtonClicked'],
 			value:-MAX_STEP,
 		});
 
 		const adjustSlider = new UISlider({
-			css:['CSAdjustSlider', 'CSFlexItem'],
+			css:'CSAdjustSlider CSFlexItem',
 			range:Range(MIN_LEVEL, MAX_LEVEL, MIN_STEP, MIN_LEVEL),
-			target:[this, 'adjustSliderMoved', 'onChange'],
-		});
-
-		const localSwitch = new UISwitch({
-			isOn:false,
-			target:[this, 'localSwitchClicked', 'onChange'],
+			target:[this, 'onChange:adjustSliderMoved'],
 		});
 
 		view.addSubview(localSwitch, 'localSwitch');
@@ -959,44 +1084,33 @@ class AdjustView extends ViewController
 
 		this.slider = adjustSlider;
 		this.switch = localSwitch;
-		this.hostname = view.queryId('hostname');
+		this.domain = view.queryId('domain');
 	}
 }
 
-class Main extends ViewController
+class App extends Messenger
 {
 	constructor()
 	{
-		window.UI = new UIFactory;
+		super();
 
-		super(
-			new UIView('UIDefault')
-		);
+		self.UI = new UIFactory;
+		self.appController = new AppController;
 
 		tabs.getActive(
-			tab => this.init(tab)
+			tab => appController.init(tab.url)
 		);
 	}
 
-	init(tab)
+	onLevelDidChange(val)
 	{
-		const host = tabs.host(tab.url);
-
-		if (host)
-		{
-			this.addChild(
-				new AdjustView(host)
-			);
-		}
-		else {
-			this.addChild(new AboutView);
-		}
+		notifications.send('levelDidChange', val);
 	}
 
-	viewDidSet(view)
+	onAutoModeDisabled(host)
 	{
-		document.body.appendChild(view.element);
+		notifications.send('autoModeDisabled', host);
 	}
 }
 
-new Main;
+let app = new App;
