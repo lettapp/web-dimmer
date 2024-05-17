@@ -1,9 +1,10 @@
 # Lett Web Dimmer
-This simple chrome extension allows you to adjust website brightness down to the level that suits you best. You can [see it in action here][demo].
+Adjust websites brightness down to the level that suits you best - see it in action [here][demo].
 
 #### Features
-* Auto-Disable mode for already dark sites.
-* Use custom settings for individual websites.
+* Custom settings for individual websites.
+* Auto-disable mode for dark sites.
+* Works on local PDF files if enabled.
 
 ![Lett Web Dimmer Extension Screenshot][screenshot]
 
