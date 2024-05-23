@@ -1,34 +1,53 @@
-/* 
+/*
  * This code is part of Lett Web Dimmer chrome extension
- * 
+ *
+ * LettApp lett.app/web-dimmer
+ * GitHub  @lettapp
  */
 'use strict';
 
-const MIN_LEVEL	= 0;
+const MIN_LEVEL	= 0.00;
 const MAX_LEVEL	= 0.67;
 const MIN_STEP	= 0.01;
 const MAX_STEP	= 0.02;
-const AUTO_NON	= null;
 const AUTO_DIS	= 0;
 const AUTO_IMG	= 1;
 const AUTO_RGB	= 2;
+const AUTO_NON	= null;
 
-function Float(float, p = 2)
+function none()
 {
-	return +(float).toPrecision(p);
+	return null;
 }
 
-function FloatCmp(a, b, mode = 0)
+function keys(object)
 {
-	a = Float(a, 5);
-	b = Float(b, 5);
+	return Object.keys(object);
+}
 
-	switch (mode)
-	{
-		case 0: return a == b;
-		case 1: return a > b;
-		case 2: return a < b;
-	}
+function values(object)
+{
+	return Object.values(object);
+}
+
+function entries(object)
+{
+	return Object.entries(object);
+}
+
+function unpack(object)
+{
+	return entries(object).shift();
+}
+
+function assign()
+{
+	return Object.assign(...arguments);
+}
+
+function on(s)
+{
+	return 'on' + s[0].toUpperCase() + s.slice(1);
 }
 
 function Range(min, max, step, value)
@@ -43,11 +62,6 @@ class is
 		return x == null;
 	}
 
-	static boolean(x)
-	{
-		return this.type(x) == Boolean;
-	}
-
 	static string(x)
 	{
 		return this.type(x) == String;
@@ -55,12 +69,17 @@ class is
 
 	static type(x)
 	{
-		return x != null && x.constructor;
+		return x?.constructor;
 	}
 }
 
 class string
 {
+	static split(str, d = ' ')
+	{
+		return str ? str.split(d) : [];
+	}
+
 	static match(ptrn, str)
 	{
 		return str.match(ptrn) || [];
@@ -77,11 +96,6 @@ class string
 	{
 		return str.split(after).pop();
 	}
-
-	static on(s)
-	{
-		return 'on' + s[0].toUpperCase() + s.slice(1);
-	}
 }
 
 class array
@@ -94,58 +108,19 @@ class array
 
 class math
 {
+	static float(float, p = 2)
+	{
+		return +(float).toFixed(p);
+	}
+
+	static floatEq(a, b)
+	{
+		return Math.abs(a - b) < 1e-9;
+	}
+
 	static bound(n, min, max)
 	{
 		return n < min ? min : n > max ? max : n;
-	}
-}
-
-class Messenger
-{
-	constructor(waitLoad)
-	{
-		this.waitLoad = waitLoad || Promise.resolve();
-
-		chrome.runtime.onMessage.addListener(
-			this.onMessage.bind(this)
-		);
-	}
-
-	async sendMessage(message, tabId)
-	{
-		const callback = this.onCallback.bind(this);
-
-		if (tabId) {
-			return chrome.tabs.sendMessage(tabId, message).catch(e => null);
-		}
-
-		try {
-			return chrome.runtime.sendMessage(message).then(callback).catch(e => null);
-		}
-		catch (e) {
-			this.onContextInvalidated?.();
-		}
-	}
-
-	onMessage(message, sender, callback)
-	{
-		let [kind, data] = Object.entries(message).pop();
-
-		kind = string.on(kind);
-
-		if (kind in this)
-		{
-			this.waitLoad.then(
-				_ => this[kind](data, sender.tab, callback)
-			);
-
-			return true;
-		}
-	}
-
-	onCallback(response)
-	{
-		return this.waitLoad.then(_ => response);
 	}
 }
 
@@ -287,31 +262,25 @@ class tabs
 {
 	static execContentScript()
 	{
-		const files = chrome.runtime.getManifest().content_scripts[0].js;
+		const files = chrome.runtime.getManifest().content_scripts[0];
 
-		this.query({}, tabs =>
+		this.getAccessible().then(tabs =>
 		{
 			for (const tab of tabs)
 			{
-				if (!this.isScriptable(tab.url)) {
-					continue;
-				}
-
 				chrome.scripting.executeScript({
 					target: {
 						tabId: tab.id
 					},
-					files: files
+					files: files.js
 				});
 			}
 		});
 	}
 
-	static getActive(callback)
+	static getActive()
 	{
-		this.query({active:true, currentWindow:true},
-			tabs => callback(tabs[0])
-		);
+		return this.query({active:true, currentWindow:true}).then(tabs => tabs[0]);
 	}
 
 	static isScriptable(url = 'chrome://newtab')
@@ -337,41 +306,95 @@ class tabs
 		}
 	}
 
-	static query(p, callback)
+	static getAccessible()
 	{
-		chrome.tabs.query(p).then(callback);
+		return this.query({}).then(
+			tabs => tabs.filter(tab => this.isScriptable(tab.url))
+		);
+	}
+
+	static query(p)
+	{
+		return chrome.tabs.query(p);
 	}
 }
 
-class App extends Messenger
+class Main
 {
-	constructor()
+	constructor(waitLoad)
 	{
-		super();
+		this.waitLoad = waitLoad || Promise.resolve();
 
-		self.addEventListener('install',
-			this.onInstalled.bind(this)
+		this.waitLoad.then(
+			this.onReady.bind(this)
 		);
 
-		chrome.commands.onCommand.addListener(
-			this.onCommand.bind(this)
-		);
+		this.register({
+			onStartup: chrome.runtime.onStartup,
+			onMessage: chrome.runtime.onMessage,
+			onCommand: chrome.commands.onCommand,
+			onInstall: {
+				addListener: addEventListener.bind(null, 'install')
+			}
+		});
+	}
 
-		chrome.runtime.onStartup.addListener(
-			this.onStartup.bind(this)
+	onReady() {
+	}
+
+	onMessage(message, sender, callback)
+	{
+		const [kind, data] = unpack(message);
+
+		this[on(kind)]?.(
+			data, sender.tab, callback
 		);
 	}
 
-	onInstalled()
+	sendMessage(message, tabId)
+	{
+		if (tabId) {
+			return chrome.tabs.sendMessage(tabId, message).catch(none);
+		}
+
+		return chrome.runtime.sendMessage(message).catch(none);
+	}
+
+	register(events)
+	{
+		const waitLoad = function(event, ...args)
+		{
+			this.waitLoad.then(
+				_ => this[event](...args)
+			);
+
+			return true;
+		}
+
+		for (const event in events)
+		{
+			if (event in this)
+			{
+				events[event].addListener(
+					waitLoad.bind(this, event)
+				);
+			}
+		}
+	}
+}
+
+class App extends Main
+{
+	onStartup()
+	{
+		sync.cleanAuto();
+	}
+
+	onInstall()
 	{
 		sync.init(
 			_ => tabs.execContentScript()
 		);
-	}
-
-	onStartup()
-	{
-		sync.cleanAuto();
 	}
 
 	onCommand(command, tab)
@@ -390,25 +413,21 @@ class App extends Messenger
 
 	adjust(host, sign)
 	{
-		const chg = MAX_STEP * sign;
-
 		sync.load(host, (level, local, auto) =>
 		{
-			if (auto)
-			{
-				if (sign != 1) {
-					return;
-				}
+			level = math.float(level + MAX_STEP * sign);
+			level = math.bound(level, MIN_LEVEL, MAX_LEVEL);
 
+			if (auto && sign < 0) {
+				return;
+			}
+
+			if (auto) {
 				sync.unsetAuto(host);
 
 				this.sendMessage({autoModeDisabled:host});
 			}
 			else {
-				level = Float(
-					math.bound(level + chg, MIN_LEVEL, MAX_LEVEL)
-				);
-
 				sync.set(level, local, host);
 
 				this.sendMessage({levelDidChange:level});

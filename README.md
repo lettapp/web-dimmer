@@ -1,5 +1,5 @@
 # Lett Web Dimmer
-Adjust websites brightness down to the level that suits you best - see it in action [here][demo].
+Adjust websites brightness down to the level that suits you best. See it in action [here][demo].
 
 #### Features
 * Custom settings for individual websites.

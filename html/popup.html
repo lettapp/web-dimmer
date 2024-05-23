@@ -1,29 +1,26 @@
 <!DOCTYPE html>
 <style>
 html {
-	--CSColorLevel1:#525252;
-	--CSColorLevel2:#999;
-	--CSColorLevel3:#f0f0f0;
-	--CSBackColor:#fff;
-	--CSBackColorLevel2:#eee;
-	--CSBorderColor:#ddd;
-	--CSBorderColor:;
-	--CSLogoFilter:none;
-	--CSSliderFilledColor:#0679f9;
-	--CSSliderRemainColor:#ddd;
+	--cs-background:#fff;
+	--cs-text-1:#525252;
+	--cs-text-2:#999;
+	--cs-text-3:#f0f0f0;
+	--cs-border:#dadce0;
+	--cs-filter:none;
+	--cs-slider-filled-color:#0679f9;
+	--cs-slider-remain-color:#ddd;
 }
 @media (prefers-color-scheme: dark)
 {
 	html {
-		--CSColorLevel1:#dedede;
-		--CSColorLevel2:#b3b3b3;
-		--CSColorLevel3:#404040;
-		--CSBackColor:#282828;
-		--CSBackColorLevel2:#222;
-		--CSBorderColor:#1a1a1a;
-		--CSLogoFilter:invert(.77);
-		--CSSliderFilledColor:#b3b3b3;
-		--CSSliderRemainColor:#404040;
+		--cs-background:#282828;
+		--cs-text-1:#dde3e3;
+		--cs-text-2:#b3b3b3;
+		--cs-text-3:#404040;
+		--cs-border:var(--cs-text-3);
+		--cs-filter:invert(.90);
+		--cs-slider-filled-color:#b3b3b3;
+		--cs-slider-remain-color:#404040;
 	}
 }
 * {
@@ -32,20 +29,21 @@ html {
 	outline:0;
 	box-sizing:border-box;
 }
-html {
-	background-color:var(--CSBackColor);
-	color:var(--CSColorLevel1);
+html, body {
 	width:300px;
 	height:156px;
+	overflow:hidden;
+}
+html {
+	background-color:var(--cs-background);
+	color:var(--cs-text-1);
 }
 body {
-	width:100%;
-	height:100%;
 	line-height:20px;
 	font-size:14px;
-	font-family:sans-serif;
-	user-select:none;
+	font-family:system-ui, arial, sans-serif;
 	cursor:default;
+	user-select:none;
 }
 svg {
 	display:block;
@@ -61,19 +59,17 @@ svg {
 	display:flex;
 	align-items:center;
 }
-.CSFlexCol {
-	display:flex;
-	flex-flow:column;
-}
 .CSFlexItem {
 	flex:1;
 }
 .CSSlider {
 	-webkit-appearance:none;
+	appearance:none;
 	height:2px;
 }
 .CSSlider::-webkit-slider-thumb {
 	-webkit-appearance:none;
+	appearance:none;
 	background-color:#fff;
 	box-shadow:0 1px 3px #777;
 	width:14px;
@@ -84,7 +80,7 @@ svg {
 	width:30px;
 }
 .CSAdjustView {
-	padding:20px 20px 16px;
+	padding:21px 20px 0;
 }
 .CSAppTitle {
 	margin-bottom:16px;
@@ -92,17 +88,17 @@ svg {
 	text-align:center;
 }
 .CSAdjustButton {
-	color:var(--CSColorLevel2);
+	color:var(--cs-text-2);
 	width:34px;
 	height:34px;
 	padding:8px;
 	border-radius:50%;
 }
 .CSAdjustButton:hover {
-	color:var(--CSColorLevel1);
+	color:var(--cs-text-1);
 }
 .CSAdjustButton:active {
-	background-color:var(--CSColorLevel3);
+	background-color:var(--cs-text-3);
 }
 .CSAdjustSlider {
 	margin:0 8px;
@@ -123,10 +119,11 @@ svg {
 	margin:8px -8px 2px;
 }
 .CSAboutView {
+	display:flex;
+	flex-flow:column;
+	height:100%;
+	padding:20px;
 	font-size:13px;
-}
-.CSAbout {
-	padding:0 20px;
 }
 .CSLogo {
 	background-image:url(/assets/icon.png);
@@ -134,36 +131,46 @@ svg {
 	width:42px;
 	height:42px;
 	margin-right:12px;
-	filter:var(--CSLogoFilter);
+	filter:var(--cs-filter);
 }
-.CSShortcuts {
-	border-top:1px solid var(--CSBorderColor);
-	padding:18px 0;
-	text-align:center;
+.CSMonoPill {
+	display:flex;
+	border:1px solid var(--cs-border);
+	border-radius:25px;
+	height:38px;
+	margin-top:auto;
+	overflow:hidden;
 }
-.CSButton {
-	display:inline-block;
-	border:1px solid var(--CSColorLevel2);
-	border-radius:3px;
-	padding:8px 16px;
-	margin:0 5px;
+.CSMonoPill > * {
+	display:flex;
+	align-items:center;
+	justify-content:center;
+	padding:0 20px;
+	border-left:1px solid var(--cs-border);
 }
-.CSButton:hover {
-	cursor:pointer;
+.CSMonoPill > :hover {
+	background-color:var(--cs-border);
+}
+.CSMonoPill > :first-child {
+	border-left:0
+}
+.CSMonoPill > :last-child {
+	flex:1;
 }
 </style>
 <div hidden>
 	<div protoId="UIDefault" class="CSView"></div>
-	<div protoId="UIAboutView" class="CSView CSAboutView CSFlexCol">
-		<div class="CSFlex CSFlexItem CSAbout">
+	<div protoId="UIAboutView" class="CSAboutView">
+		<div class="CSFlex">
 			<div class="CSLogo"></div>
-			<div class="CSFlexItem">Go to any website and click this icon or use the keyboard shortcuts.</div>
+			<div class="CSFlexItem">Go to any website and click this Icon or create keyboard shortcuts.</div>
 		</div>
-		<div class="CSShortcuts">
-			<div class="CSButton" id="shortcuts">Create Keyboard Shortcuts</div>
+		<div class="CSMonoPill" id="buttons">
+			<div id="testdrive">Test Site</div>
+			<div id="shortcuts">Keyboard Shortcuts</div>
 		</div>
 	</div>
-	<div protoId="UIAdjustView" class="CSView CSAdjustView">
+	<div protoId="UIAdjustView" class="CSAdjustView">
 		<div class="CSAppTitle">Lett Web Dimmer</div>
 		<div class="CSControlPane">
 			<div class="CSFlex CSSwitchOption" id="localSwitch">

@@ -1,34 +1,53 @@
-/* 
+/*
  * This code is part of Lett Web Dimmer chrome extension
- * 
+ *
+ * LettApp lett.app/web-dimmer
+ * GitHub  @lettapp
  */
 'use strict';
 
-const MIN_LEVEL	= 0;
+const MIN_LEVEL	= 0.00;
 const MAX_LEVEL	= 0.67;
 const MIN_STEP	= 0.01;
 const MAX_STEP	= 0.02;
-const AUTO_NON	= null;
 const AUTO_DIS	= 0;
 const AUTO_IMG	= 1;
 const AUTO_RGB	= 2;
+const AUTO_NON	= null;
 
-function Float(float, p = 2)
+function none()
 {
-	return +(float).toPrecision(p);
+	return null;
 }
 
-function FloatCmp(a, b, mode = 0)
+function keys(object)
 {
-	a = Float(a, 5);
-	b = Float(b, 5);
+	return Object.keys(object);
+}
 
-	switch (mode)
-	{
-		case 0: return a == b;
-		case 1: return a > b;
-		case 2: return a < b;
-	}
+function values(object)
+{
+	return Object.values(object);
+}
+
+function entries(object)
+{
+	return Object.entries(object);
+}
+
+function unpack(object)
+{
+	return entries(object).shift();
+}
+
+function assign()
+{
+	return Object.assign(...arguments);
+}
+
+function on(s)
+{
+	return 'on' + s[0].toUpperCase() + s.slice(1);
 }
 
 function Range(min, max, step, value)
@@ -43,11 +62,6 @@ class is
 		return x == null;
 	}
 
-	static boolean(x)
-	{
-		return this.type(x) == Boolean;
-	}
-
 	static string(x)
 	{
 		return this.type(x) == String;
@@ -55,12 +69,17 @@ class is
 
 	static type(x)
 	{
-		return x != null && x.constructor;
+		return x?.constructor;
 	}
 }
 
 class string
 {
+	static split(str, d = ' ')
+	{
+		return str ? str.split(d) : [];
+	}
+
 	static match(ptrn, str)
 	{
 		return str.match(ptrn) || [];
@@ -77,11 +96,6 @@ class string
 	{
 		return str.split(after).pop();
 	}
-
-	static on(s)
-	{
-		return 'on' + s[0].toUpperCase() + s.slice(1);
-	}
 }
 
 class array
@@ -94,58 +108,19 @@ class array
 
 class math
 {
+	static float(float, p = 2)
+	{
+		return +(float).toFixed(p);
+	}
+
+	static floatEq(a, b)
+	{
+		return Math.abs(a - b) < 1e-9;
+	}
+
 	static bound(n, min, max)
 	{
 		return n < min ? min : n > max ? max : n;
-	}
-}
-
-class Messenger
-{
-	constructor(waitLoad)
-	{
-		this.waitLoad = waitLoad || Promise.resolve();
-
-		chrome.runtime.onMessage.addListener(
-			this.onMessage.bind(this)
-		);
-	}
-
-	async sendMessage(message, tabId)
-	{
-		const callback = this.onCallback.bind(this);
-
-		if (tabId) {
-			return chrome.tabs.sendMessage(tabId, message).catch(e => null);
-		}
-
-		try {
-			return chrome.runtime.sendMessage(message).then(callback).catch(e => null);
-		}
-		catch (e) {
-			this.onContextInvalidated?.();
-		}
-	}
-
-	onMessage(message, sender, callback)
-	{
-		let [kind, data] = Object.entries(message).pop();
-
-		kind = string.on(kind);
-
-		if (kind in this)
-		{
-			this.waitLoad.then(
-				_ => this[kind](data, sender.tab, callback)
-			);
-
-			return true;
-		}
-	}
-
-	onCallback(response)
-	{
-		return this.waitLoad.then(_ => response);
 	}
 }
 
@@ -153,35 +128,40 @@ class notifications
 {
 	static addListener(target, ids)
 	{
-		ids = ids.split(' ');
+		ids = string.split(ids);
 
-		for (const id of ids)
-		{
+		for (const id of ids) {
 			this.getChannel(id).add(target);
 		}
 	}
 
 	static removeListener(target, ids)
 	{
-		if (ids) {
-			ids = ids.split(' ');
-		}
-		else {
-			ids = Object.keys(this.channels);
+		ids = string.split(ids);
+
+		if (!ids.length) {
+			ids = keys(this.channels);
 		}
 
-		for (const id of ids)
-		{
+		for (const id of ids) {
 			this.getChannel(id).delete(target);
 		}
 	}
 
-	static send(id, data)
+	static send(pack)
 	{
-		for (const target of this.getChannel(id))
-		{
-			target[string.on(id)](data);
+		const [id, data] = unpack(pack);
+
+		for (const target of this.getChannel(id)) {
+			target[on(id)](data);
 		}
+	}
+
+	static contextInvalidated(isUncaught)
+	{
+		this.send({contextInvalidated:isUncaught});
+
+		this.channels = {};
 	}
 
 	static getChannel(id)
@@ -330,31 +310,25 @@ class tabs
 {
 	static execContentScript()
 	{
-		const files = chrome.runtime.getManifest().content_scripts[0].js;
+		const files = chrome.runtime.getManifest().content_scripts[0];
 
-		this.query({}, tabs =>
+		this.getAccessible().then(tabs =>
 		{
 			for (const tab of tabs)
 			{
-				if (!this.isScriptable(tab.url)) {
-					continue;
-				}
-
 				chrome.scripting.executeScript({
 					target: {
 						tabId: tab.id
 					},
-					files: files
+					files: files.js
 				});
 			}
 		});
 	}
 
-	static getActive(callback)
+	static getActive()
 	{
-		this.query({active:true, currentWindow:true},
-			tabs => callback(tabs[0])
-		);
+		return this.query({active:true, currentWindow:true}).then(tabs => tabs[0]);
 	}
 
 	static isScriptable(url = 'chrome://newtab')
@@ -380,9 +354,80 @@ class tabs
 		}
 	}
 
-	static query(p, callback)
+	static getAccessible()
 	{
-		chrome.tabs.query(p).then(callback);
+		return this.query({}).then(
+			tabs => tabs.filter(tab => this.isScriptable(tab.url))
+		);
+	}
+
+	static query(p)
+	{
+		return chrome.tabs.query(p);
+	}
+}
+
+class Main
+{
+	constructor(waitLoad)
+	{
+		this.waitLoad = waitLoad || Promise.resolve();
+
+		this.waitLoad.then(
+			this.onReady.bind(this)
+		);
+
+		this.register({
+			onStartup: chrome.runtime.onStartup,
+			onMessage: chrome.runtime.onMessage,
+			onCommand: chrome.commands.onCommand,
+			onInstall: {
+				addListener: addEventListener.bind(null, 'install')
+			}
+		});
+	}
+
+	onReady() {
+	}
+
+	onMessage(message, sender, callback)
+	{
+		const [kind, data] = unpack(message);
+
+		this[on(kind)]?.(
+			data, sender.tab, callback
+		);
+	}
+
+	sendMessage(message, tabId)
+	{
+		if (tabId) {
+			return chrome.tabs.sendMessage(tabId, message).catch(none);
+		}
+
+		return chrome.runtime.sendMessage(message).catch(none);
+	}
+
+	register(events)
+	{
+		const waitLoad = function(event, ...args)
+		{
+			this.waitLoad.then(
+				_ => this[event](...args)
+			);
+
+			return true;
+		}
+
+		for (const event in events)
+		{
+			if (event in this)
+			{
+				events[event].addListener(
+					waitLoad.bind(this, event)
+				);
+			}
+		}
 	}
 }
 
@@ -643,7 +688,7 @@ class UIView extends UIElement
 	{
 		e.stopPropagation();
 
-		this[string.on(e.type)](e);
+		this[on(e.type)](e);
 	}
 
 	queryId(id)
@@ -719,9 +764,11 @@ class UIStepper extends UIButton
 		super(init);
 	}
 
-	onPointerdown()
+	onPointerdown(e)
 	{
-		this.didInvoke();
+		if (e.which != 1) {
+			return;
+		}
 
 		this.pressedPid = setTimeout(_ => {
 			this.invokedPid = setInterval(_ => this.didInvoke(), 20);
@@ -734,6 +781,8 @@ class UIStepper extends UIButton
 
 			window.onpointerup = null;
 		};
+
+		this.didInvoke();
 	}
 
 	didInvoke()
@@ -753,7 +802,7 @@ class UISlider extends UIView
 
 		super('UISlider', init);
 
-		Object.assign(this, init.range);
+		assign(this, init.range);
 	}
 
 	onInput()
@@ -802,10 +851,10 @@ class UISlider extends UIView
 		}
 
 		this.animId = setInterval(
-			_ => FloatCmp(this.value += chg, val) && this.animateEnd(), 17
+			_ => math.floatEq(this.value += chg, val) && this.animateEnd(), 17
 		);
 
-		return Float(val);
+		return math.float(val);
 	}
 
 	animateEnd()
@@ -817,8 +866,8 @@ class UISlider extends UIView
 	{
 		const w = (this.value - this.min) / (this.max - this.min) * 100;
 
-		const a = '--CSSliderFilledColor';
-		const b = '--CSSliderRemainColor';
+		const a = '--cs-slider-filled-color';
+		const b = '--cs-slider-remain-color';
 
 		this.style.background = string.format(
 			'linear-gradient(to right, var(%s) 0%, var(%s) %s%, var(%s) %s%, var(%s) 100%)', [a, a, w, b, w, b]
@@ -851,16 +900,13 @@ class UISwitch extends UISlider
 
 class AppController extends ViewController
 {
-	constructor()
+	constructor(url)
 	{
+		const host = tabs.host(url);
+
 		super(
 			new UIView('UIDefault')
 		);
-	}
-
-	init(url)
-	{
-		const host = tabs.host(url);
 
 		if (host) {
 			this.addChild(
@@ -889,13 +935,18 @@ class AboutView extends ViewController
 
 	viewDidSet(view)
 	{
-		view.queryId('shortcuts').addEventListener('click', this.keyShortcuts);
+		view.queryId('buttons').addEventListener('click', this.buttonClicked);
 	}
 
-	keyShortcuts()
+	buttonClicked(e)
 	{
+		const urls = {
+			testdrive:'https://lett.app/web-dimmer/playground',
+			shortcuts:'chrome://extensions/shortcuts',
+		};
+
 		chrome.tabs.create({
-			url:'chrome://extensions/shortcuts'
+			url:urls[e.target.id]
 		});
 	}
 }
@@ -1088,28 +1139,30 @@ class AdjustView extends ViewController
 	}
 }
 
-class App extends Messenger
+class App extends Main
 {
 	constructor()
 	{
-		super();
+		super(
+			tabs.getActive()
+		);
 
 		self.UI = new UIFactory;
-		self.appController = new AppController;
-
-		tabs.getActive(
-			tab => appController.init(tab.url)
-		);
 	}
 
-	onLevelDidChange(val)
+	onReady({url})
 	{
-		notifications.send('levelDidChange', val);
+		new AppController(url);
+	}
+
+	onLevelDidChange(newVal)
+	{
+		notifications.send({levelDidChange:newVal});
 	}
 
 	onAutoModeDisabled(host)
 	{
-		notifications.send('autoModeDisabled', host);
+		notifications.send({autoModeDisabled:host});
 	}
 }
 
