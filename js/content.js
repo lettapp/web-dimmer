@@ -118,7 +118,7 @@ class math
 		return Math.abs(a - b) < 1e-9;
 	}
 
-	static bound(n, min, max)
+	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
 	}
@@ -176,7 +176,7 @@ class storage
 {
 	static get(key, initVal)
 	{
-		return this.ns.get(key).then(r =>
+		return this.local.get(key).then(r =>
 		{
 			if (is.string(key)) {
 				return r[key] ?? initVal;
@@ -192,20 +192,20 @@ class storage
 			key = {[key]:val};
 		}
 
-		return this.ns.set(key);
+		return this.local.set(key);
 	}
 
 	static remove(key)
 	{
-		return this.ns.remove(key);
+		return this.local.remove(key);
 	}
 
 	static clear()
 	{
-		return this.ns.clear();
+		return this.local.clear();
 	}
 
-	static ns = chrome.storage.local;
+	static local = chrome.storage.local;
 }
 
 class sync
@@ -254,8 +254,7 @@ class sync
 	{
 		storage.get('auto').then(auto =>
 		{
-			if (mode == AUTO_NON && auto[host] == AUTO_RGB)
-			{
+			if (mode == AUTO_NON && auto[host] == AUTO_RGB) {
 				auto[host] = AUTO_DIS;
 			}
 			else {
@@ -296,8 +295,7 @@ class sync
 
 		storage.get().then(b =>
 		{
-			for (const k in a)
-			{
+			for (const k in a) {
 				if (k in b) delete a[k];
 			}
 
@@ -387,7 +385,7 @@ class App
 			return;
 		}
 
-		this.host = location.host || string.last('/', location.pathname);
+		[this.host, this.path] = this.getHostPath();
 
 		this.layer = new Layer;
 
@@ -413,7 +411,7 @@ class App
 			switch (auto)
 			{
 				case AUTO_NON:
-					return !this.adjust(level);
+					return this.adjust(level) | 1;
 
 				case AUTO_DIS:
 					return this.adjust(level);
@@ -428,10 +426,10 @@ class App
 	{
 		if (document.body)
 		{
-			const mode = this.getAutoMode();
+			const reason = this.getAutoMode();
 
 			this.load.then(
-				calc => calc && mode && this.autoDisable(mode)
+				detect => detect && reason && this.autoDisable(reason)
 			);
 
 			notifications.removeListener(this, 'mutation');
@@ -472,11 +470,11 @@ class App
 		}
 	}
 
-	autoDisable(mode, animate)
+	autoDisable(reason, animate)
 	{
 		this.adjust(0, animate);
 
-		sync.setAuto(this.host, this.auto = mode);
+		sync.setAuto(this.host, this.auto = reason);
 	}
 
 	adjust(level, animate)
@@ -486,29 +484,60 @@ class App
 
 	getAutoMode()
 	{
-		const doctype = document.contentType;
-
-		if (doctype == 'application/pdf') {
+		if (this.isDoc) {
 			return AUTO_NON;
 		}
 
-		if (doctype.startsWith('image')) {
+		if (this.isMedia) {
 			return AUTO_IMG;
 		}
 
-		if (this.autoHexTest()) {
+		if (this.hexTest) {
 			return AUTO_RGB;
 		}
 		else {
 			setTimeout(
-				_ => this.autoHexTest() && this.autoDisable(AUTO_RGB, true),
+				_ => this.hexTest && this.autoDisable(AUTO_RGB, true),
 			1e3);
 		}
 
 		return AUTO_NON;
 	}
 
-	autoHexTest()
+	observeMutations()
+	{
+		const observer = new MutationObserver(
+			mutation => notifications.send({mutation})
+		);
+
+		observer.observe(
+			document.documentElement, {childList:true}
+		);
+
+		notifications.addListener(this, 'mutation');
+	}
+
+	getHostPath()
+	{
+		const url = new URL(location);
+
+		const host = url.host;
+		const path = string.last('/', url.pathname);
+
+		retirn (url.protocol == 'file:') ? [path, path] : [host, path];
+	}
+
+	get isMedia()
+	{
+		return /^(image|video)/.test(document.contentType);
+	}
+
+	get isDoc()
+	{
+		return /(pdf|doc|docx)$/.test(this.path);
+	}
+
+	get hexTest()
 	{
 		const hex = [document.documentElement, document.body].map(node =>
 		{
@@ -524,19 +553,6 @@ class App
 		});
 
 		return Math.min(...hex) < 0xbbbbbb;
-	}
-
-	observeMutations()
-	{
-		const observer = new MutationObserver(
-			mutation => notifications.send({mutation})
-		);
-
-		observer.observe(
-			document.documentElement, {childList:true}
-		);
-
-		notifications.addListener(this, 'mutation');
 	}
 }
 

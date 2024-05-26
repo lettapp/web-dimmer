@@ -118,7 +118,7 @@ class math
 		return Math.abs(a - b) < 1e-9;
 	}
 
-	static bound(n, min, max)
+	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
 	}
@@ -128,7 +128,7 @@ class storage
 {
 	static get(key, initVal)
 	{
-		return this.ns.get(key).then(r =>
+		return this.local.get(key).then(r =>
 		{
 			if (is.string(key)) {
 				return r[key] ?? initVal;
@@ -144,20 +144,20 @@ class storage
 			key = {[key]:val};
 		}
 
-		return this.ns.set(key);
+		return this.local.set(key);
 	}
 
 	static remove(key)
 	{
-		return this.ns.remove(key);
+		return this.local.remove(key);
 	}
 
 	static clear()
 	{
-		return this.ns.clear();
+		return this.local.clear();
 	}
 
-	static ns = chrome.storage.local;
+	static local = chrome.storage.local;
 }
 
 class sync
@@ -206,8 +206,7 @@ class sync
 	{
 		storage.get('auto').then(auto =>
 		{
-			if (mode == AUTO_NON && auto[host] == AUTO_RGB)
-			{
+			if (mode == AUTO_NON && auto[host] == AUTO_RGB) {
 				auto[host] = AUTO_DIS;
 			}
 			else {
@@ -248,8 +247,7 @@ class sync
 
 		storage.get().then(b =>
 		{
-			for (const k in a)
-			{
+			for (const k in a) {
 				if (k in b) delete a[k];
 			}
 
@@ -416,7 +414,7 @@ class App extends Main
 		sync.load(host, (level, local, auto) =>
 		{
 			level = math.float(level + MAX_STEP * sign);
-			level = math.bound(level, MIN_LEVEL, MAX_LEVEL);
+			level = math.bound(level, [MIN_LEVEL, MAX_LEVEL]);
 
 			if (auto && sign < 0) {
 				return;

@@ -118,7 +118,7 @@ class math
 		return Math.abs(a - b) < 1e-9;
 	}
 
-	static bound(n, min, max)
+	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
 	}
@@ -176,7 +176,7 @@ class storage
 {
 	static get(key, initVal)
 	{
-		return this.ns.get(key).then(r =>
+		return this.local.get(key).then(r =>
 		{
 			if (is.string(key)) {
 				return r[key] ?? initVal;
@@ -192,20 +192,20 @@ class storage
 			key = {[key]:val};
 		}
 
-		return this.ns.set(key);
+		return this.local.set(key);
 	}
 
 	static remove(key)
 	{
-		return this.ns.remove(key);
+		return this.local.remove(key);
 	}
 
 	static clear()
 	{
-		return this.ns.clear();
+		return this.local.clear();
 	}
 
-	static ns = chrome.storage.local;
+	static local = chrome.storage.local;
 }
 
 class sync
@@ -254,8 +254,7 @@ class sync
 	{
 		storage.get('auto').then(auto =>
 		{
-			if (mode == AUTO_NON && auto[host] == AUTO_RGB)
-			{
+			if (mode == AUTO_NON && auto[host] == AUTO_RGB) {
 				auto[host] = AUTO_DIS;
 			}
 			else {
@@ -296,8 +295,7 @@ class sync
 
 		storage.get().then(b =>
 		{
-			for (const k in a)
-			{
+			for (const k in a) {
 				if (k in b) delete a[k];
 			}
 
@@ -908,14 +906,9 @@ class AppController extends ViewController
 			new UIView('UIDefault')
 		);
 
-		if (host) {
-			this.addChild(
-				new AdjustView(host)
-			);
-		}
-		else {
-			this.addChild(new AboutView);
-		}
+		this.addChild(
+			host ? new AdjustView(host) : new AboutView
+		);
 	}
 
 	viewDidSet(view)
@@ -935,13 +928,21 @@ class AboutView extends ViewController
 
 	viewDidSet(view)
 	{
-		view.queryId('buttons').addEventListener('click', this.buttonClicked);
+		this.test = 'https://lett.app/web-dimmer/playground';
+
+		document.head.appendChild(
+			assign(document.createElement('link'), {
+				rel:'prefetch', as:'document', href:this.test
+			})
+		);
+
+		view.queryId('buttons').addEventListener('click', this.onClick.bind(this));
 	}
 
-	buttonClicked(e)
+	onClick(e)
 	{
 		const urls = {
-			testdrive:'https://lett.app/web-dimmer/playground',
+			testdrive:this.test,
 			shortcuts:'chrome://extensions/shortcuts',
 		};
 
@@ -994,10 +995,8 @@ class AdjustView extends ViewController
 	{
 		const {localLevel, host, auto} = this;
 
-		if (sender.isOn)
-		{
+		if (sender.isOn) {
 			this.set(localLevel, true);
-
 			sync.set(localLevel, true, host);
 		}
 		else {
@@ -1016,9 +1015,11 @@ class AdjustView extends ViewController
 
 	adjustButtonClicked(sender)
 	{
-		this.setLevel(this.level + sender.value);
+		const newValue = math.bound(this.level + sender.value, [MIN_LEVEL, MAX_LEVEL]);
 
-		this.onLevelChange();
+		if (newValue != this.level) {
+			this.setLevel(newValue) & this.onLevelChange();
+		}
 	}
 
 	adjustSliderMoved(sender)
@@ -1093,9 +1094,9 @@ class AdjustView extends ViewController
 		}
 	}
 
-	onLevelDidChange(newval)
+	onLevelDidChange(newVal)
 	{
-		this.setLevel(newval);
+		this.setLevel(newVal);
 	}
 
 	onAutoModeDisabled(host)
@@ -1125,7 +1126,7 @@ class AdjustView extends ViewController
 		});
 
 		const adjustSlider = new UISlider({
-			css:'CSAdjustSlider CSFlexItem',
+			css:'CSAdjustSlider',
 			range:Range(MIN_LEVEL, MAX_LEVEL, MIN_STEP, MIN_LEVEL),
 			target:[this, 'onChange:adjustSliderMoved'],
 		});
