@@ -91,11 +91,6 @@ class string
 
 		return str.replace(/%s/g, _ => args.shift());
 	}
-
-	static last(after, str)
-	{
-		return str.split(after).pop();
-	}
 }
 
 class array
@@ -157,13 +152,6 @@ class notifications
 		}
 	}
 
-	static contextInvalidated(isUncaught)
-	{
-		this.send({contextInvalidated:isUncaught});
-
-		this.channels = {};
-	}
-
 	static getChannel(id)
 	{
 		return this.channels[id] ||= new Set;
@@ -176,14 +164,9 @@ class storage
 {
 	static get(key, initVal)
 	{
-		return this.local.get(key).then(r =>
-		{
-			if (is.string(key)) {
-				return r[key] ?? initVal;
-			}
-
-			return r;
-		});
+		return this.local.get(key).then(
+			r => is.string(key) ? (r[key] ?? initVal) : r
+		);
 	}
 
 	static set(key, val)
@@ -326,7 +309,7 @@ class tabs
 
 	static getActive()
 	{
-		return this.query({active:true, currentWindow:true}).then(tabs => tabs[0]);
+		return this.query({active:true}).then(tabs => tabs[0]);
 	}
 
 	static isScriptable(url = 'chrome://newtab')
@@ -342,13 +325,8 @@ class tabs
 	{
 		url = this.isScriptable(url);
 
-		if (url)
-		{
-			if (url.protocol == 'file:') {
-				return string.last('/', url.pathname);
-			}
-
-			return url.host;
+		if (url) {
+			return url.protocol == 'file:' ? url.pathname.split('/').pop() : url.host;
 		}
 	}
 
@@ -443,7 +421,7 @@ class UIFactory
 				proto.removeAttribute('protoid');
 			}
 			else {
-				throw 'missing protoid for child';
+				throw proto;
 			}
 
 			this.protos[id] = proto;
@@ -461,12 +439,24 @@ class UIFactory
 	{
 		for (const k in b)
 		{
-			if (k in a) {
-				a[k] = a[k].concat(' ', b[k]);
+			let ak = a[k], bk = b[k];
+
+			switch (is.type(ak))
+			{
+				case String:
+					bk = ak.concat(' ', bk);
+				break;
+
+				case Array:
+					bk = ak.concat(bk);
+				break;
+
+				case Object:
+					bk = this.extend(ak, bk);
+				break;
 			}
-			else {
-				a[k] = b[k];
-			}
+
+			a[k] = bk;
 		}
 
 		return a;
@@ -484,13 +474,11 @@ class UIResponder
 	{
 		let nextResponder;
 
-		if (action in this && this != sender)
-		{
+		if (action in this && this != sender) {
 			return this[action](sender, data);
 		}
 
-		if (nextResponder = this.parent || this.superview)
-		{
+		if (nextResponder = this.parent || this.superview) {
 			return nextResponder.handleAction(action, sender, data);
 		}
 	}
@@ -522,8 +510,7 @@ class ViewController extends UIResponder
 		);
 	}
 
-	viewDidSet()
-	{
+	viewDidSet() {
 	}
 
 	addChild(child, viewTargetId)
@@ -552,42 +539,45 @@ class UIElement extends UIResponder
 		this.element.appendChild(child.element || child);
 	}
 
-	addClass(str)
+	addClass(s)
 	{
-		this.element.classList.add(...str.split(' '));
+		this.element.classList.add(
+			...string.split(s)
+		);
 	}
 
-	delClass(str)
+	delClass(s)
 	{
-		this.element.classList.remove(...str.split(' '));
+		this.element.classList.remove(
+			...string.split(s)
+		);
 	}
 
-	import(methods)
+	import(s)
 	{
-		methods = methods.split(' ');
+		const e = this.element, p = {};
 
-		for (const x of methods)
+		for (const k of string.split(s))
 		{
-			if (x in this) {
-				throw Error('property already defined');
+			if (k in this) {
+				throw k;
 			}
 
-			if (this.element[x] instanceof Function)
+			if (e[k] instanceof Function)
 			{
-				this[x] = this.element[x].bind(this.element);
+				p[k] = {
+					value: e[k].bind(e)
+				};
 			}
 			else {
-				Object.defineProperty(this, x,
-				{
-					get() {
-						return this.element[x];
-					},
-					set(v) {
-						this.element[x] = v;
-					}
-				});
+				p[k] = {
+					get: f => e[k],
+					set: v => e[k] = v,
+				};
 			}
 		}
+
+		Object.defineProperties(this, p);
 	}
 }
 
@@ -654,8 +644,7 @@ class UIView extends UIElement
 
 	addSubviews(views, targetId)
 	{
-		for (const view of views)
-		{
+		for (const view of views) {
 			this.addSubview(view, targetId)
 		}
 	}
@@ -676,8 +665,7 @@ class UIView extends UIElement
 	{
 		const handler = this.handleEvent.bind(this);
 
-		for (const event of events.split(' '))
-		{
+		for (const event of events.split(' ')) {
 			this.addEventListener(event, handler);
 		}
 	}
@@ -700,8 +688,7 @@ class UIView extends UIElement
 
 		if (targets.size)
 		{
-			for (const [target, action] of targets)
-			{
+			for (const [target, action] of targets) {
 				target.handleAction(action, this, data);
 			}
 		}
@@ -764,19 +751,15 @@ class UIStepper extends UIButton
 
 	onPointerdown(e)
 	{
-		if (e.which != 1) {
-			return;
-		}
+		if (e.which != 1) return;
 
 		this.pressedPid = setTimeout(_ => {
 			this.invokedPid = setInterval(_ => this.didInvoke(), 20);
 		}, 450);
 
-		window.onpointerup = _ =>
-		{
+		window.onpointerup = _ => {
 			clearTimeout(this.pressedPid);
 			clearInterval(this.invokedPid);
-
 			window.onpointerup = null;
 		};
 
@@ -791,7 +774,7 @@ class UIStepper extends UIButton
 
 class UISlider extends UIView
 {
-	constructor(init )
+	constructor(init)
 	{
 		UI.extend(init, {
 			import:'min max step',
@@ -849,7 +832,7 @@ class UISlider extends UIView
 		}
 
 		this.animId = setInterval(
-			_ => math.floatEq(this.value += chg, val) && this.animateEnd(), 17
+			_ => math.floatEq(this.value += chg, val) && this.animateEnd(), 20
 		);
 
 		return math.float(val);
@@ -875,7 +858,7 @@ class UISlider extends UIView
 
 class UISwitch extends UISlider
 {
-	constructor(init )
+	constructor(init)
 	{
 		UI.extend(init, {
 			css:'CSSwitch',
@@ -1015,11 +998,8 @@ class AdjustView extends ViewController
 
 	adjustButtonClicked(sender)
 	{
-		const newValue = math.bound(this.level + sender.value, [MIN_LEVEL, MAX_LEVEL]);
-
-		if (newValue != this.level) {
-			this.setLevel(newValue) & this.onLevelChange();
-		}
+		this.setLevel(this.level + sender.value);
+		this.onLevelChange();
 	}
 
 	adjustSliderMoved(sender)
@@ -1053,7 +1033,7 @@ class AdjustView extends ViewController
 			host = 'Global';
 		}
 
-		this.domain.textContent = host;
+		this.scope.textContent = host;
 	}
 
 	disableAutoMode()
@@ -1087,8 +1067,7 @@ class AdjustView extends ViewController
 
 	get autoReason()
 	{
-		switch (this.auto)
-		{
+		switch (this.auto) {
 			case AUTO_IMG: return 'Image';
 			case AUTO_RGB: return 'Dark Site';
 		}
@@ -1136,7 +1115,7 @@ class AdjustView extends ViewController
 
 		this.slider = adjustSlider;
 		this.switch = localSwitch;
-		this.domain = view.queryId('domain');
+		this.scope = view.queryId('scope');
 	}
 }
 

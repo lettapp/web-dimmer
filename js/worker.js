@@ -91,11 +91,6 @@ class string
 
 		return str.replace(/%s/g, _ => args.shift());
 	}
-
-	static last(after, str)
-	{
-		return str.split(after).pop();
-	}
 }
 
 class array
@@ -128,14 +123,9 @@ class storage
 {
 	static get(key, initVal)
 	{
-		return this.local.get(key).then(r =>
-		{
-			if (is.string(key)) {
-				return r[key] ?? initVal;
-			}
-
-			return r;
-		});
+		return this.local.get(key).then(
+			r => is.string(key) ? (r[key] ?? initVal) : r
+		);
 	}
 
 	static set(key, val)
@@ -278,7 +268,7 @@ class tabs
 
 	static getActive()
 	{
-		return this.query({active:true, currentWindow:true}).then(tabs => tabs[0]);
+		return this.query({active:true}).then(tabs => tabs[0]);
 	}
 
 	static isScriptable(url = 'chrome://newtab')
@@ -294,13 +284,8 @@ class tabs
 	{
 		url = this.isScriptable(url);
 
-		if (url)
-		{
-			if (url.protocol == 'file:') {
-				return string.last('/', url.pathname);
-			}
-
-			return url.host;
+		if (url) {
+			return url.protocol == 'file:' ? url.pathname.split('/').pop() : url.host;
 		}
 	}
 

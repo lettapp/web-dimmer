@@ -91,11 +91,6 @@ class string
 
 		return str.replace(/%s/g, _ => args.shift());
 	}
-
-	static last(after, str)
-	{
-		return str.split(after).pop();
-	}
 }
 
 class array
@@ -157,13 +152,6 @@ class notifications
 		}
 	}
 
-	static contextInvalidated(isUncaught)
-	{
-		this.send({contextInvalidated:isUncaught});
-
-		this.channels = {};
-	}
-
 	static getChannel(id)
 	{
 		return this.channels[id] ||= new Set;
@@ -176,14 +164,9 @@ class storage
 {
 	static get(key, initVal)
 	{
-		return this.local.get(key).then(r =>
-		{
-			if (is.string(key)) {
-				return r[key] ?? initVal;
-			}
-
-			return r;
-		});
+		return this.local.get(key).then(
+			r => is.string(key) ? (r[key] ?? initVal) : r
+		);
 	}
 
 	static set(key, val)
@@ -312,10 +295,7 @@ class Layer
 
 		assign(el.style, {
 			position:'fixed',
-			top:0,
-			left:0,
-			right:0,
-			bottom:0,
+			inset:0,
 			opacity:0,
 			zIndex:2147483647,
 			backgroundColor:'#000',
@@ -495,13 +475,10 @@ class App
 		if (this.hexTest) {
 			return AUTO_RGB;
 		}
-		else {
-			setTimeout(
-				_ => this.hexTest && this.autoDisable(AUTO_RGB, true),
-			1e3);
-		}
 
-		return AUTO_NON;
+		setTimeout(
+			_ => this.auto != AUTO_DIS && this.hexTest && this.autoDisable(AUTO_RGB, true),
+		1e3);
 	}
 
 	observeMutations()
@@ -519,12 +496,11 @@ class App
 
 	getHostPath()
 	{
-		const url = new URL(location);
+		const host = location.host;
+		const path = location.pathname.split('/').pop();
+		const http = location.protocol;
 
-		const host = url.host;
-		const path = string.last('/', url.pathname);
-
-		retirn (url.protocol == 'file:') ? [path, path] : [host, path];
+		return (http == 'file:') ? [path, path] : [host, path];
 	}
 
 	get isMedia()
