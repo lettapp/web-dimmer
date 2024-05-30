@@ -6,14 +6,29 @@
  */
 'use strict';
 
-const MIN_LEVEL	= 0.00;
-const MAX_LEVEL	= 0.67;
-const MIN_STEP	= 0.01;
-const MAX_STEP	= 0.02;
-const AUTO_DIS	= 0;
-const AUTO_IMG	= 1;
-const AUTO_RGB	= 2;
-const AUTO_NON	= null;
+const Level = {
+	Min:0,
+	Max:.67,
+	Step:.01,
+	MaxStep:.02,
+}
+
+const Auto = {
+	Off:0,
+	Usr:1,
+	Img:2,
+	Hex:3,
+}
+
+const Anim = {
+	Easy:400,
+	Swift:200,
+}
+
+const Ext = {
+	V:'_ver',
+	G:'_global',
+}
 
 function none()
 {
@@ -108,11 +123,6 @@ class math
 		return +(float).toFixed(p);
 	}
 
-	static floatEq(a, b)
-	{
-		return Math.abs(a - b) < 1e-9;
-	}
-
 	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
@@ -169,13 +179,9 @@ class storage
 		);
 	}
 
-	static set(key, val)
+	static set(obj)
 	{
-		if (is.string(key)) {
-			key = {[key]:val};
-		}
-
-		return this.local.set(key);
+		return this.local.set(obj);
 	}
 
 	static remove(key)
@@ -183,9 +189,11 @@ class storage
 		return this.local.remove(key);
 	}
 
-	static clear()
+	static rewrite(obj)
 	{
-		return this.local.clear();
+		return this.local.clear().then(
+			this.local.set(obj)
+		);
 	}
 
 	static local = chrome.storage.local;
@@ -193,97 +201,28 @@ class storage
 
 class sync
 {
-	static load(host, callback)
+	static load(host)
 	{
-		return storage.get([host, 'g', 'auto']).then(d =>
-		{
-			let a = d.g,
-				b = host in d,
-				c = d.auto[host] ?? AUTO_NON;
+		return storage.get([Ext.G, host]).then(r => r[host] ?? r[Ext.G]);
+	}
 
-			if (b) {
-				a = d[host];
-			}
+	static set(host, auto, level)
+	{
+		(auto == Auto.Off) && (host = Ext.G);
 
-			return callback(a, b, c);
+		storage.set({
+			[host]:{auto, level}
 		});
 	}
 
-	static get(host)
-	{
-		return storage.get(host, 0);
-	}
-
-	static set(level, local, host)
-	{
-		if (!local) {
-			host = 'g';
-		}
-
-		storage.set(host, level);
-	}
-
-	static unset(host)
+	static remove(host)
 	{
 		storage.remove(host);
 	}
 
-	static getGlobal(fn)
+	static getGlobal()
 	{
-		return storage.get('g').then(fn);
-	}
-
-	static setAuto(host, mode)
-	{
-		storage.get('auto').then(auto =>
-		{
-			if (mode == AUTO_NON && auto[host] == AUTO_RGB) {
-				auto[host] = AUTO_DIS;
-			}
-			else {
-				auto[host] = mode;
-			}
-
-			storage.set({auto});
-		});
-	}
-
-	static unsetAuto(host)
-	{
-		this.setAuto(host, AUTO_NON);
-	}
-
-	static cleanAuto()
-	{
-		storage.get().then(d =>
-		{
-			const auto = d.auto;
-
-			for (const host in auto)
-			{
-				if (host in d || auto[host] != AUTO_DIS) {
-					delete auto[host];
-				}
-			}
-
-			storage.set(d);
-		});
-	}
-
-	static init(fn)
-	{
-		const a = {
-			auto:{}, g:0.14
-		};
-
-		storage.get().then(b =>
-		{
-			for (const k in a) {
-				if (k in b) delete a[k];
-			}
-
-			storage.set(a).then(fn);
-		});
+		return storage.get(Ext.G).then(global => global.level);
 	}
 }
 
@@ -309,16 +248,16 @@ class Layer
 		this.interv = 0;
 	}
 
-	adjust(level, animate)
+	adjust(level, duration)
 	{
 		const el = this.el.style;
 
-		if (animate)
+		if (duration)
 		{
-			el.transition = 'opacity 200ms';
+			el.transition = `opacity ${duration}ms`;
 
 			setTimeout(
-				_ => el.transition = '', 200
+				_ => el.transition = '', duration
 			);
 		}
 
@@ -365,120 +304,97 @@ class App
 			return;
 		}
 
-		[this.host, this.path] = this.getHostPath();
-
-		this.layer = new Layer;
-
-		this.load = this.init();
-
 		chrome.storage.onChanged.addListener(
 			this.onChange.bind(this)
 		);
 
 		this.observeMutations();
+
+		this.host = location.host || location.pathname.split('/').pop();
+
+		this.layer = new Layer;
+
+		this.load = this.init();
 	}
 
-	init(reinit)
+	init(anim)
 	{
-		return sync.load(this.host, (level, local, auto) =>
-		{
-			assign(this, {local, auto});
-
-			if (local || reinit) {
-				return this.adjust(level, reinit);
-			}
-
-			switch (auto)
-			{
-				case AUTO_NON:
-					return this.adjust(level) | 1;
-
-				case AUTO_DIS:
-					return this.adjust(level);
-
-				default:
-					return this.adjust(0);
-			}
-		});
+		return sync.load(this.host).then(
+			({level, auto}) => this.adjust(level, anim) || !(this.auto = auto)
+		);
 	}
 
 	onMutation()
 	{
-		if (document.body)
-		{
-			const reason = this.getAutoMode();
-
-			this.load.then(
-				detect => detect && reason && this.autoDisable(reason)
-			);
-
-			notifications.removeListener(this, 'mutation');
+		if (!document.body) {
+			return;
 		}
+
+		this.load.then(
+			detect => detect && this.autoDetect()
+		);
+
+		notifications.removeListener(this, 'mutation');
 	}
 
-	onChange(d)
+	onChange(chg)
 	{
-		let c, host = this.host;
+		let c;
 
-		if (c = d.g)
-		{
-			if (this.local || this.auto) {
-				return;
-			}
-
-			return this.adjust(c.newValue);
+		if (c = chg[Ext.G]) {
+			return !this.auto && this.adjust(c.newValue.level);
 		}
 
-		if (c = d[host])
+		if (c = chg[this.host])
 		{
 			const modeChange = [c.oldValue, c.newValue].some(is.null);
 
 			if (modeChange) {
-				return this.init(true);
+				return this.didLoad && this.init(Anim.Easy);
 			}
 
-			return this.adjust(c.newValue);
-		}
-
-		if (c = d.auto)
-		{
-			const autoRevoked = c.oldValue[host] && !c.newValue[host];
-
-			if (autoRevoked) {
-				return this.init(true);
-			}
+			return this.adjust(c.newValue.level);
 		}
 	}
 
-	autoDisable(reason, animate)
+	autoDetect()
 	{
-		this.adjust(0, animate);
+		const reason = this.getAutoMode();
 
-		sync.setAuto(this.host, this.auto = reason);
-	}
+		if (reason) {
+			this.autoDisable(reason);
+		}
 
-	adjust(level, animate)
-	{
-		this.layer.adjust(level, animate);
+		if (reason === undefined) {
+			setTimeout(_ => this.hexTest && this.autoDisable(Auto.Hex, Anim.Swift), 1e3);
+		}
 	}
 
 	getAutoMode()
 	{
 		if (this.isDoc) {
-			return AUTO_NON;
+			return Auto.Off;
 		}
 
 		if (this.isMedia) {
-			return AUTO_IMG;
+			return Auto.Img;
 		}
 
 		if (this.hexTest) {
-			return AUTO_RGB;
+			return Auto.Hex;
 		}
+	}
 
-		setTimeout(
-			_ => this.auto != AUTO_DIS && this.hexTest && this.autoDisable(AUTO_RGB, true),
-		1e3);
+	autoDisable(reason, anim)
+	{
+		this.adjust(0, anim);
+
+		sync.set(this.host, this.auto = reason, 0);
+	}
+
+	adjust(level, anim)
+	{
+		this.layer.adjust(level, anim);
 	}
 
 	observeMutations()
@@ -494,23 +410,19 @@ class App
 		notifications.addListener(this, 'mutation');
 	}
 
-	getHostPath()
+	get didLoad()
 	{
-		const host = location.host;
-		const path = location.pathname.split('/').pop();
-		const http = location.protocol;
-
-		return (http == 'file:') ? [path, path] : [host, path];
-	}
-
-	get isMedia()
-	{
-		return /^(image|video)/.test(document.contentType);
+		return document.timeline.currentTime > 2e3;
 	}
 
 	get isDoc()
 	{
-		return /(pdf|doc|docx)$/.test(this.path);
+		return document.contentType.includes('pdf');
+	}
+
+	get isMedia()
+	{
+		return /image|video/.test(document.contentType);
 	}
 
 	get hexTest()
@@ -523,8 +435,8 @@ class App
 				rgb = [255, 255, 255];
 			}
 
-			return +rgb.reduce(
-				(p, c) => p + c.toString(16).padStart(2, 0), '0x'
+			return rgb.reduce(
+				(s, n) => s + n.toString(16).padStart(2, 0), '0x'
 			);
 		});
 

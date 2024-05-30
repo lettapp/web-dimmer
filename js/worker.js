@@ -6,14 +6,29 @@
  */
 'use strict';
 
-const MIN_LEVEL	= 0.00;
-const MAX_LEVEL	= 0.67;
-const MIN_STEP	= 0.01;
-const MAX_STEP	= 0.02;
-const AUTO_DIS	= 0;
-const AUTO_IMG	= 1;
-const AUTO_RGB	= 2;
-const AUTO_NON	= null;
+const Level = {
+	Min:0,
+	Max:.67,
+	Step:.01,
+	MaxStep:.02,
+}
+
+const Auto = {
+	Off:0,
+	Usr:1,
+	Img:2,
+	Hex:3,
+}
+
+const Anim = {
+	Easy:400,
+	Swift:200,
+}
+
+const Ext = {
+	V:'_ver',
+	G:'_global',
+}
 
 function none()
 {
@@ -108,11 +123,6 @@ class math
 		return +(float).toFixed(p);
 	}
 
-	static floatEq(a, b)
-	{
-		return Math.abs(a - b) < 1e-9;
-	}
-
 	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
@@ -128,13 +138,9 @@ class storage
 		);
 	}
 
-	static set(key, val)
+	static set(obj)
 	{
-		if (is.string(key)) {
-			key = {[key]:val};
-		}
-
-		return this.local.set(key);
+		return this.local.set(obj);
 	}
 
 	static remove(key)
@@ -142,9 +148,11 @@ class storage
 		return this.local.remove(key);
 	}
 
-	static clear()
+	static rewrite(obj)
 	{
-		return this.local.clear();
+		return this.local.clear().then(
+			this.local.set(obj)
+		);
 	}
 
 	static local = chrome.storage.local;
@@ -152,97 +160,28 @@ class storage
 
 class sync
 {
-	static load(host, callback)
+	static load(host)
 	{
-		return storage.get([host, 'g', 'auto']).then(d =>
-		{
-			let a = d.g,
-				b = host in d,
-				c = d.auto[host] ?? AUTO_NON;
+		return storage.get([Ext.G, host]).then(r => r[host] ?? r[Ext.G]);
+	}
 
-			if (b) {
-				a = d[host];
-			}
+	static set(host, auto, level)
+	{
+		(auto == Auto.Off) && (host = Ext.G);
 
-			return callback(a, b, c);
+		storage.set({
+			[host]:{auto, level}
 		});
 	}
 
-	static get(host)
-	{
-		return storage.get(host, 0);
-	}
-
-	static set(level, local, host)
-	{
-		if (!local) {
-			host = 'g';
-		}
-
-		storage.set(host, level);
-	}
-
-	static unset(host)
+	static remove(host)
 	{
 		storage.remove(host);
 	}
 
-	static getGlobal(fn)
+	static getGlobal()
 	{
-		return storage.get('g').then(fn);
-	}
-
-	static setAuto(host, mode)
-	{
-		storage.get('auto').then(auto =>
-		{
-			if (mode == AUTO_NON && auto[host] == AUTO_RGB) {
-				auto[host] = AUTO_DIS;
-			}
-			else {
-				auto[host] = mode;
-			}
-
-			storage.set({auto});
-		});
-	}
-
-	static unsetAuto(host)
-	{
-		this.setAuto(host, AUTO_NON);
-	}
-
-	static cleanAuto()
-	{
-		storage.get().then(d =>
-		{
-			const auto = d.auto;
-
-			for (const host in auto)
-			{
-				if (host in d || auto[host] != AUTO_DIS) {
-					delete auto[host];
-				}
-			}
-
-			storage.set(d);
-		});
-	}
-
-	static init(fn)
-	{
-		const a = {
-			auto:{}, g:0.14
-		};
-
-		storage.get().then(b =>
-		{
-			for (const k in a) {
-				if (k in b) delete a[k];
-			}
-
-			storage.set(a).then(fn);
-		});
+		return storage.get(Ext.G).then(global => global.level);
 	}
 }
 
@@ -268,7 +207,7 @@ class tabs
 
 	static getActive()
 	{
-		return this.query({active:true}).then(tabs => tabs[0]);
+		return this.query({active:true, currentWindow:true}).then(tabs => tabs[0]);
 	}
 
 	static isScriptable(url = 'chrome://newtab')
@@ -285,7 +224,7 @@ class tabs
 		url = this.isScriptable(url);
 
 		if (url) {
-			return url.protocol == 'file:' ? url.pathname.split('/').pop() : url.host;
+			return url.host || url.pathname.split('/').pop();
 		}
 	}
 
@@ -370,12 +309,12 @@ class App extends Main
 {
 	onStartup()
 	{
-		sync.cleanAuto();
+		this.cleanup();
 	}
 
 	onInstall()
 	{
-		sync.init(
+		this.upgrade().then(
 			_ => tabs.execContentScript()
 		);
 	}
@@ -396,26 +335,63 @@ class App extends Main
 
 	adjust(host, sign)
 	{
-		sync.load(host, (level, local, auto) =>
+		sync.load(host).then(({auto, level}) =>
 		{
-			level = math.float(level + MAX_STEP * sign);
-			level = math.bound(level, [MIN_LEVEL, MAX_LEVEL]);
+			level = math.bound(level + sign * Level.MaxStep, [Level.Min, Level.Max]);
 
-			if (auto && sign < 0) {
-				return;
-			}
-
-			if (auto) {
-				sync.unsetAuto(host);
-
+			if (auto > Auto.Usr) {
+				sync.remove(host)
 				this.sendMessage({autoModeDisabled:host});
 			}
 			else {
-				sync.set(level, local, host);
-
+				sync.set(host, auto, level);
 				this.sendMessage({levelDidChange:level});
 			}
 		});
+	}
+
+	async cleanup()
+	{
+		const o = await storage.get();
+
+		for (const k in o) {
+			!k.startsWith('_') && (o[k].auto > Auto.Usr) && delete o[k];
+		}
+
+		storage.rewrite(o);
+	}
+
+	async upgrade()
+	{
+		const r = await storage.get();
+
+		const oldVer = (r[Ext.V] ?? '0').replace(/\./g, '');
+		const newVer = chrome.runtime.getManifest().version;
+
+		if (keys(r).length == 0)
+		{
+			return storage.set({
+				[Ext.V]:newVer,
+				[Ext.G]:{auto:0, level:.14}
+			});
+		}
+
+		if (oldVer < 240530)
+		{
+			const o = {
+				[Ext.V]:newVer,
+				[Ext.G]:{auto:0, level:r.g}
+			};
+
+			for (const k in r)
+			{
+				if (!['g', 'auto'].includes(k)) {
+					o[k] = {auto:1, level:r[k]};
+				}
+			}
+
+			return storage.rewrite(o);
+		}
 	}
 }
 

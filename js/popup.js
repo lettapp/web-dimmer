@@ -6,14 +6,29 @@
  */
 'use strict';
 
-const MIN_LEVEL	= 0.00;
-const MAX_LEVEL	= 0.67;
-const MIN_STEP	= 0.01;
-const MAX_STEP	= 0.02;
-const AUTO_DIS	= 0;
-const AUTO_IMG	= 1;
-const AUTO_RGB	= 2;
-const AUTO_NON	= null;
+const Level = {
+	Min:0,
+	Max:.67,
+	Step:.01,
+	MaxStep:.02,
+}
+
+const Auto = {
+	Off:0,
+	Usr:1,
+	Img:2,
+	Hex:3,
+}
+
+const Anim = {
+	Easy:400,
+	Swift:200,
+}
+
+const Ext = {
+	V:'_ver',
+	G:'_global',
+}
 
 function none()
 {
@@ -108,11 +123,6 @@ class math
 		return +(float).toFixed(p);
 	}
 
-	static floatEq(a, b)
-	{
-		return Math.abs(a - b) < 1e-9;
-	}
-
 	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
@@ -169,13 +179,9 @@ class storage
 		);
 	}
 
-	static set(key, val)
+	static set(obj)
 	{
-		if (is.string(key)) {
-			key = {[key]:val};
-		}
-
-		return this.local.set(key);
+		return this.local.set(obj);
 	}
 
 	static remove(key)
@@ -183,9 +189,11 @@ class storage
 		return this.local.remove(key);
 	}
 
-	static clear()
+	static rewrite(obj)
 	{
-		return this.local.clear();
+		return this.local.clear().then(
+			this.local.set(obj)
+		);
 	}
 
 	static local = chrome.storage.local;
@@ -193,97 +201,28 @@ class storage
 
 class sync
 {
-	static load(host, callback)
+	static load(host)
 	{
-		return storage.get([host, 'g', 'auto']).then(d =>
-		{
-			let a = d.g,
-				b = host in d,
-				c = d.auto[host] ?? AUTO_NON;
+		return storage.get([Ext.G, host]).then(r => r[host] ?? r[Ext.G]);
+	}
 
-			if (b) {
-				a = d[host];
-			}
+	static set(host, auto, level)
+	{
+		(auto == Auto.Off) && (host = Ext.G);
 
-			return callback(a, b, c);
+		storage.set({
+			[host]:{auto, level}
 		});
 	}
 
-	static get(host)
-	{
-		return storage.get(host, 0);
-	}
-
-	static set(level, local, host)
-	{
-		if (!local) {
-			host = 'g';
-		}
-
-		storage.set(host, level);
-	}
-
-	static unset(host)
+	static remove(host)
 	{
 		storage.remove(host);
 	}
 
-	static getGlobal(fn)
+	static getGlobal()
 	{
-		return storage.get('g').then(fn);
-	}
-
-	static setAuto(host, mode)
-	{
-		storage.get('auto').then(auto =>
-		{
-			if (mode == AUTO_NON && auto[host] == AUTO_RGB) {
-				auto[host] = AUTO_DIS;
-			}
-			else {
-				auto[host] = mode;
-			}
-
-			storage.set({auto});
-		});
-	}
-
-	static unsetAuto(host)
-	{
-		this.setAuto(host, AUTO_NON);
-	}
-
-	static cleanAuto()
-	{
-		storage.get().then(d =>
-		{
-			const auto = d.auto;
-
-			for (const host in auto)
-			{
-				if (host in d || auto[host] != AUTO_DIS) {
-					delete auto[host];
-				}
-			}
-
-			storage.set(d);
-		});
-	}
-
-	static init(fn)
-	{
-		const a = {
-			auto:{}, g:0.14
-		};
-
-		storage.get().then(b =>
-		{
-			for (const k in a) {
-				if (k in b) delete a[k];
-			}
-
-			storage.set(a).then(fn);
-		});
+		return storage.get(Ext.G).then(global => global.level);
 	}
 }
 
@@ -309,7 +248,7 @@ class tabs
 
 	static getActive()
 	{
-		return this.query({active:true}).then(tabs => tabs[0]);
+		return this.query({active:true, currentWindow:true}).then(tabs => tabs[0]);
 	}
 
 	static isScriptable(url = 'chrome://newtab')
@@ -326,7 +265,7 @@ class tabs
 		url = this.isScriptable(url);
 
 		if (url) {
-			return url.protocol == 'file:' ? url.pathname.split('/').pop() : url.host;
+			return url.host || url.pathname.split('/').pop();
 		}
 	}
 
@@ -789,14 +728,13 @@ class UISlider extends UIView
 	onInput()
 	{
 		this.setBackground();
-
 		this.sendAction('onChange');
 	}
 
 	getValue()
 	{
 		if (this.animId) {
-			return this.finalValue;
+			return this.xValue;
 		}
 
 		return this.value;
@@ -805,7 +743,7 @@ class UISlider extends UIView
 	setValue(value, animate)
 	{
 		if (animate) {
-			return this.finalValue = this.animate(value);
+			return this.xValue = this.animate(value);
 		}
 
 		this.value = value;
@@ -819,23 +757,36 @@ class UISlider extends UIView
 	set value(n)
 	{
 		this.element.value = n;
-
 		this.setBackground();
 	}
 
-	animate(val)
+	animate(newVal)
 	{
-		const chg = Math.sign(val - this.value) * this.step;
+		const sign = Math.sign(newVal - this.value);
 
 		if (this.animId) {
 			this.animateEnd();
 		}
 
-		this.animId = setInterval(
-			_ => math.floatEq(this.value += chg, val) && this.animateEnd(), 20
-		);
+		this.animId = setInterval(_ =>
+		{
+			let stepVal = this.value + (sign * this.step * 2.5);
 
-		return math.float(val);
+			if (sign > 0) {
+				stepVal = Math.min(stepVal, newVal);
+			}
+			else {
+				stepVal = Math.max(stepVal, newVal);
+			}
+
+			if (stepVal == newVal) {
+				this.animateEnd();
+			}
+
+			this.value = stepVal;
+		}, 17);
+
+		return newVal;
 	}
 
 	animateEnd()
@@ -845,13 +796,13 @@ class UISlider extends UIView
 
 	setBackground()
 	{
-		const w = (this.value - this.min) / (this.max - this.min) * 100;
+		const w = (this.value / this.max) * 100;
 
 		const a = '--cs-slider-filled-color';
 		const b = '--cs-slider-remain-color';
 
 		this.style.background = string.format(
-			'linear-gradient(to right, var(%s) 0%, var(%s) %s%, var(%s) %s%, var(%s) 100%)', [a, a, w, b, w, b]
+			'linear-gradient(to right, var(%s) %s%, var(%s) 0)', [a, w, b]
 		);
 	}
 }
@@ -911,27 +862,20 @@ class AboutView extends ViewController
 
 	viewDidSet(view)
 	{
-		this.test = 'https://lett.app/web-dimmer/playground';
-
-		document.head.appendChild(
-			assign(document.createElement('link'), {
-				rel:'prefetch', as:'document', href:this.test
-			})
-		);
-
-		view.queryId('buttons').addEventListener('click', this.onClick.bind(this));
-	}
-
-	onClick(e)
-	{
 		const urls = {
-			testdrive:this.test,
+			testdrive:'https://lett.app/web-dimmer/playground',
 			shortcuts:'chrome://extensions/shortcuts',
 		};
 
-		chrome.tabs.create({
-			url:urls[e.target.id]
-		});
+		document.head.appendChild(
+			assign(document.createElement('link'), {
+				rel:'prefetch', as:'document', href:urls.testdrive
+			})
+		);
+
+		view.queryId('buttons').addEventListener('click',
+			e => chrome.tabs.create({url:urls[e.target.id]})
+		);
 	}
 }
 
@@ -943,109 +887,85 @@ class AdjustView extends ViewController
 			new UIView('UIAdjustView')
 		);
 
-		this.init(host);
+		this.init(
+			this.host = host
+		);
 
 		notifications.addListener(this, 'levelDidChange autoModeDisabled');
 	}
 
-	init(host, animate)
+	init(host, animate = false)
 	{
-		sync.load(host, (level, local, auto) =>
-		{
-			this.host = host;
-			this.auto = auto;
-			this.local = auto || local;
-
-			if (auto) {
-				this.set(0);
-			}
-			else {
-				this.set(level, animate);
-			}
-		});
+		sync.load(host).then(
+			({level, auto}) => (this.auto = auto) & this.set(level, animate)
+		);
 	}
 
 	set(level, animate)
 	{
-		this.localLevel = this.level;
+		this.userLevel = this.level;
 
-		this.onModeChange();
-
-		this.setLevel(level, animate);
+		this.UISetMode(this.auto);
+		this.UISetLevel(level, animate);
 	}
 
-	localSwitchClicked(sender)
+	autoSwitchClicked({isOn})
 	{
-		const {localLevel, host, auto} = this;
+		const {host, userLevel} = this;
 
-		if (sender.isOn) {
-			this.set(localLevel, true);
-			sync.set(localLevel, true, host);
+		if (isOn) {
+			this.auto = Auto.Usr;
+
+			this.set(userLevel, Anim.Swift);
+			sync.set(host, Auto.Usr, userLevel);
 		}
 		else {
-			sync.getGlobal(
-				level => this.set(level, true)
+			this.auto = Auto.Off;
+
+			sync.getGlobal().then(
+				globLevel => this.set(globLevel, Anim.Swift)
 			);
 
-			if (auto) {
-				this.disableAutoMode();
-			}
-			else {
-				sync.unset(host);
-			}
+			sync.remove(host);
 		}
 	}
 
-	adjustButtonClicked(sender)
+	adjustButtonClicked({value})
 	{
-		this.setLevel(this.level + sender.value);
-		this.onLevelChange();
-	}
-
-	adjustSliderMoved(sender)
-	{
-		this.onLevelChange();
+		this.onLevelChange(
+			this.UISetLevel(this.level + value)
+		);
 	}
 
 	onLevelChange()
 	{
-		if (this.auto) {
-			this.disableAutoMode();
+		const {host, auto} = this;
+
+		if (auto > Auto.Usr) {
+			this.UISetMode(this.auto = Auto.Usr);
 		}
 
-		sync.set(this.level, this.local, this.host);
+		sync.set(host, this.auto, this.level);
 	}
 
-	onModeChange()
+	UISetMode(newMode)
 	{
-		let {local, auto, host} = this;
+		this.switch.isOn = newMode;
 
-		if (local)
+		switch (newMode)
 		{
-			if (auto) {
-				host = string.format('Auto-Disabled: %s', this.autoReason);
-			}
-			else {
-				host = host.replace('www.', '');
-			}
-		}
-		else {
-			host = 'Global';
-		}
+			case Auto.Off:
+				return this.scope.textContent = 'Global';
 
-		this.scope.textContent = host;
+			case Auto.Usr:
+				return this.scope.textContent = this.host.replace('www.', '');
+
+			default:
+				return this.scope.textContent = string.format('Auto-Disabled: %s', this.autoReason);
+		}
 	}
 
-	disableAutoMode()
-	{
-		this.auto = false;
-
-		this.onModeChange();
-
-		sync.unsetAuto(this.host);
-	}
-
-	setLevel(value, animate)
+	UISetLevel(value, animate)
 	{
 		this.slider.setValue(value, animate);
 	}
@@ -1055,59 +975,49 @@ class AdjustView extends ViewController
 		return this.slider.getValue();
 	}
 
-	get local()
-	{
-		return this.switch.isOn;
-	}
-
-	set local(bool)
-	{
-		this.switch.isOn = bool;
-	}
-
 	get autoReason()
 	{
 		switch (this.auto) {
-			case AUTO_IMG: return 'Image';
-			case AUTO_RGB: return 'Dark Site';
+			case Auto.Img: return 'Image';
+			case Auto.Hex: return 'Dark Site';
 		}
 	}
 
 	onLevelDidChange(newVal)
 	{
-		this.setLevel(newVal);
+		this.UISetLevel(newVal);
 	}
 
 	onAutoModeDisabled(host)
 	{
-		this.init(host, true);
+		this.init(host, Anim.Swift);
 	}
 
 	viewDidSet(view)
 	{
 		const localSwitch = new UISwitch({
 			isOn:false,
-			target:[this, 'onChange:localSwitchClicked'],
+			target:[this, 'onChange:autoSwitchClicked'],
 		});
 
 		const adjustUp = new UIStepper({
 			css:'CSAdjustButton',
 			image:'UIIconPlus',
 			target:[this, 'onInvoke:adjustButtonClicked'],
-			value:+MAX_STEP,
+			value:+Level.MaxStep,
 		});
 
 		const adjustDown = new UIStepper({
 			css:'CSAdjustButton',
 			image:'UIIconMinus',
 			target:[this, 'onInvoke:adjustButtonClicked'],
-			value:-MAX_STEP,
+			value:-Level.MaxStep,
 		});
 
 		const adjustSlider = new UISlider({
 			css:'CSAdjustSlider',
-			range:Range(MIN_LEVEL, MAX_LEVEL, MIN_STEP, MIN_LEVEL),
-			target:[this, 'onChange:adjustSliderMoved'],
+			range:Range(Level.Min, Level.Max, Level.Step, Level.Min),
+			target:[this, 'onChange:onLevelChange'],
 		});
 
 		view.addSubview(localSwitch, 'localSwitch');
