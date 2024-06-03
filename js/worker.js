@@ -60,6 +60,13 @@ function assign()
 	return Object.assign(...arguments);
 }
 
+function match(expr, ...cases)
+{
+	for (const [k, v] of cases) {
+		if (expr === k) return v;
+	}
+}
+
 function on(s)
 {
 	return 'on' + s[0].toUpperCase() + s.slice(1);
@@ -118,11 +125,6 @@ class array
 
 class math
 {
-	static float(float, p = 2)
-	{
-		return +(float).toFixed(p);
-	}
-
 	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
@@ -151,7 +153,7 @@ class storage
 	static rewrite(obj)
 	{
 		return this.local.clear().then(
-			this.local.set(obj)
+			_ => this.set(obj)
 		);
 	}
 
@@ -340,13 +342,10 @@ class App extends Main
 			level = math.bound(level + sign * Level.MaxStep, [Level.Min, Level.Max]);
 
 			if (auto > Auto.Usr) {
-				sync.remove(host)
-				this.sendMessage({autoModeDisabled:host});
+				return sync.remove(host);
 			}
-			else {
-				sync.set(host, auto, level);
-				this.sendMessage({levelDidChange:level});
-			}
+
+			sync.set(host, auto, level);
 		});
 	}
 
@@ -355,7 +354,7 @@ class App extends Main
 		const o = await storage.get();
 
 		for (const k in o) {
-			!k.startsWith('_') && (o[k].auto > Auto.Usr) && delete o[k];
+			!k.startsWith('_') && (o[k].auto != Auto.Usr) && delete o[k];
 		}
 
 		storage.rewrite(o);
@@ -363,34 +362,16 @@ class App extends Main
 
 	async upgrade()
 	{
-		const r = await storage.get();
+		const v = await storage.get(Ext.V);
 
-		const oldVer = (r[Ext.V] ?? '0').replace(/\./g, '');
+		const oldVer = v?.replace(/\./g, '');
 		const newVer = chrome.runtime.getManifest().version;
 
-		if (keys(r).length == 0)
-		{
-			return storage.set({
+		if (!oldVer) {
+			return storage.rewrite({
 				[Ext.V]:newVer,
 				[Ext.G]:{auto:0, level:.14}
 			});
-		}
-
-		if (oldVer < 240530)
-		{
-			const o = {
-				[Ext.V]:newVer,
-				[Ext.G]:{auto:0, level:r.g}
-			};
-
-			for (const k in r)
-			{
-				if (!['g', 'auto'].includes(k)) {
-					o[k] = {auto:1, level:r[k]};
-				}
-			}
-
-			return storage.rewrite(o);
 		}
 	}
 }

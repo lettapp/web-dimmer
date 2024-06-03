@@ -60,6 +60,13 @@ function assign()
 	return Object.assign(...arguments);
 }
 
+function match(expr, ...cases)
+{
+	for (const [k, v] of cases) {
+		if (expr === k) return v;
+	}
+}
+
 function on(s)
 {
 	return 'on' + s[0].toUpperCase() + s.slice(1);
@@ -118,56 +125,10 @@ class array
 
 class math
 {
-	static float(float, p = 2)
-	{
-		return +(float).toFixed(p);
-	}
-
 	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
 	}
-}
-
-class notifications
-{
-	static addListener(target, ids)
-	{
-		ids = string.split(ids);
-
-		for (const id of ids) {
-			this.getChannel(id).add(target);
-		}
-	}
-
-	static removeListener(target, ids)
-	{
-		ids = string.split(ids);
-
-		if (!ids.length) {
-			ids = keys(this.channels);
-		}
-
-		for (const id of ids) {
-			this.getChannel(id).delete(target);
-		}
-	}
-
-	static send(pack)
-	{
-		const [id, data] = unpack(pack);
-
-		for (const target of this.getChannel(id)) {
-			target[on(id)](data);
-		}
-	}
-
-	static getChannel(id)
-	{
-		return this.channels[id] ||= new Set;
-	}
-
-	static channels = {};
 }
 
 class storage
@@ -192,7 +153,7 @@ class storage
 	static rewrite(obj)
 	{
 		return this.local.clear().then(
-			this.local.set(obj)
+			_ => this.set(obj)
 		);
 	}
 
@@ -354,14 +315,7 @@ class UIFactory
 
 		for (const proto of document.body.firstChild.children)
 		{
-			const id = proto.getAttribute('protoid');
-
-			if (id) {
-				proto.removeAttribute('protoid');
-			}
-			else {
-				throw proto;
-			}
+			const id = proto.attributes.removeNamedItem('protoid').value;
 
 			this.protos[id] = proto;
 		}
@@ -452,23 +406,23 @@ class ViewController extends UIResponder
 	viewDidSet() {
 	}
 
-	addChild(child, viewTargetId)
+	addChild(child, viewParentId)
 	{
 		child.setParent(this);
 
 		this.children.push(child);
 
-		this.view.addSubview(child.view, viewTargetId);
+		this.view.addSubview(child.view, viewParentId);
 	}
 }
 
 class UIElement extends UIResponder
 {
-	constructor(protoId)
+	constructor(element)
 	{
 		super();
 
-		this.element = UI.create(protoId);
+		this.element = element;
 
 		this.import('style hidden addEventListener setAttribute querySelector textContent');
 	}
@@ -522,9 +476,11 @@ class UIElement extends UIResponder
 
 class UIView extends UIElement
 {
-	constructor(protoId, init = {})
+	constructor(init)
 	{
-		super(protoId);
+		super(
+			UI.create(init.source || 'UIView')
+		);
 
 		this.superview;
 		this.targets = {};
@@ -546,8 +502,8 @@ class UIView extends UIElement
 			this.addTarget(...init.target);
 		}
 
-		if (init.css) {
-			this.addClass(init.css);
+		if (init.styles) {
+			this.addClass(init.styles);
 		}
 
 		if (init.text) {
@@ -559,6 +515,16 @@ class UIView extends UIElement
 				this.setAttribute(attr, init.attrs[attr]);
 			}
 		}
+
+		if (init.superview) {
+			const [view, targetId] = init.superview;
+			view.addSubview(this, targetId);
+		}
+
+		this.didInit(init);
+	}
+
+	didInit(init) {
 	}
 
 	remove()
@@ -651,22 +617,13 @@ class UIButton extends UIView
 {
 	constructor(init)
 	{
-		super('UIDefault', init);
-
-		if (init.label) {
-			this.setLabel(init.label);
-		}
+		super(init);
 
 		if (init.image) {
 			this.addImage(init.image);
 		}
 
 		this.value = init.value;
-	}
-
-	setLabel(text)
-	{
-		this.textContent = text;
 	}
 
 	addImage(protoId)
@@ -690,17 +647,16 @@ class UIStepper extends UIButton
 
 	onPointerdown(e)
 	{
-		if (e.which != 1) return;
+		if (e.which != 1) {
+			return;
+		}
 
-		this.pressedPid = setTimeout(_ => {
-			this.invokedPid = setInterval(_ => this.didInvoke(), 20);
-		}, 450);
+		let invoke = () => isDown && this.didInvoke() & requestAnimationFrame(invoke);
+		let isDown = setTimeout(invoke, 450);
 
-		window.onpointerup = _ => {
-			clearTimeout(this.pressedPid);
-			clearInterval(this.invokedPid);
-			window.onpointerup = null;
-		};
+		addEventListener('pointerup',
+			_ => isDown = clearTimeout(isDown), {once:true}
+		);
 
 		this.didInvoke();
 	}
@@ -716,19 +672,17 @@ class UISlider extends UIView
 	constructor(init)
 	{
 		UI.extend(init, {
+			source:'UISlider',
 			import:'min max step',
 			events:'input'
 		});
 
-		super('UISlider', init);
-
-		assign(this, init.range);
+		super(init);
 	}
 
-	onInput()
+	didInit(init)
 	{
-		this.setBackground();
-		this.sendAction('onChange');
+		assign(this, init.range);
 	}
 
 	getValue()
@@ -742,27 +696,31 @@ class UISlider extends UIView
 
 	setValue(value, animate)
 	{
-		if (animate) {
+		if (animate || this.animId) {
 			return this.xValue = this.animate(value);
 		}
 
 		this.value = value;
 	}
 
-	get value()
+	onInput()
 	{
-		return +this.element.value;
+		this.setBackground() & this.sendAction('onChange');
 	}
 
-	set value(n)
+	setBackground()
 	{
-		this.element.value = n;
-		this.setBackground();
+		const w = (this.value / this.max) * 100;
+
+		this.style.background = string.format(
+			'linear-gradient(to right, var(--filled) %s%, var(--remain) 0)', [w]
+		);
 	}
 
 	animate(newVal)
 	{
-		const sign = Math.sign(newVal - this.value);
+		const step = Math.sign(newVal - this.value) * this.step * 1e3/400;
+		const limt = step > 0 ? Math.min : Math.max;
 
 		if (this.animId) {
 			this.animateEnd();
@@ -770,14 +728,7 @@ class UISlider extends UIView
 
 		this.animId = setInterval(_ =>
 		{
-			let stepVal = this.value + (sign * this.step * 2.5);
-
-			if (sign > 0) {
-				stepVal = Math.min(stepVal, newVal);
-			}
-			else {
-				stepVal = Math.max(stepVal, newVal);
-			}
+			const stepVal = limt(this.value + step, newVal);
 
 			if (stepVal == newVal) {
 				this.animateEnd();
@@ -794,16 +745,14 @@ class UISlider extends UIView
 		this.animId = clearInterval(this.animId);
 	}
 
-	setBackground()
+	get value()
 	{
-		const w = (this.value / this.max) * 100;
+		return +this.element.value;
+	}
 
-		const a = '--cs-slider-filled-color';
-		const b = '--cs-slider-remain-color';
-
-		this.style.background = string.format(
-			'linear-gradient(to right, var(%s) %s%, var(%s) 0)', [a, w, b]
-		);
+	set value(n)
+	{
+		this.setBackground(this.element.value = n);
 	}
 }
 
@@ -812,7 +761,7 @@ class UISwitch extends UISlider
 	constructor(init)
 	{
 		UI.extend(init, {
-			css:'CSSwitch',
+			styles:'CSSwitch',
 			range:Range(0, 1, 1, +init.isOn)
 		});
 
@@ -837,7 +786,7 @@ class AppController extends ViewController
 		const host = tabs.host(url);
 
 		super(
-			new UIView('UIDefault')
+			new UIView({})
 		);
 
 		this.addChild(
@@ -856,7 +805,7 @@ class AboutView extends ViewController
 	constructor()
 	{
 		super(
-			new UIView('UIAboutView')
+			new UIView({source:'UIAboutView'})
 		);
 	}
 
@@ -884,14 +833,16 @@ class AdjustView extends ViewController
 	constructor(host)
 	{
 		super(
-			new UIView('UIAdjustView')
+			new UIView({source:'UIAdjustView'})
 		);
 
 		this.init(
 			this.host = host
 		);
 
-		notifications.addListener(this, 'levelDidChange autoModeDisabled');
+		chrome.storage.onChanged.addListener(
+			this.onStorageChange.bind(this)
+		);
 	}
 
 	init(host, animate = false)
@@ -899,6 +850,26 @@ class AdjustView extends ViewController
 		sync.load(host).then(
 			({level, auto}) => (this.auto = auto) & this.set(level, animate)
 		);
+	}
+
+	onStorageChange(chg)
+	{
+		let c;
+
+		if (c = chg[Ext.G]) {
+			return !this.auto && this.UISetLevel(c.newValue.level);
+		}
+
+		if (c = chg[this.host])
+		{
+			if (c.newValue) {
+				return this.UISetLevel(c.newValue.level);
+			}
+
+			if (this.auto != Auto.Off) {
+				return this.init(this.host, Anim.Easy);
+			}
+		}
 	}
 
 	set(level, animate)
@@ -909,21 +880,21 @@ class AdjustView extends ViewController
 		this.UISetLevel(level, animate);
 	}
 
-	autoSwitchClicked({isOn})
+	modeSwitchClicked({isOn})
 	{
 		const {host, userLevel} = this;
 
 		if (isOn) {
 			this.auto = Auto.Usr;
 
-			this.set(userLevel, Anim.Swift);
+			this.set(userLevel, Anim.Easy);
 			sync.set(host, Auto.Usr, userLevel);
 		}
 		else {
 			this.auto = Auto.Off;
 
 			sync.getGlobal().then(
-				globLevel => this.set(globLevel, Anim.Swift)
+				globLevel => this.set(globLevel, Anim.Easy)
 			);
 
 			sync.remove(host);
@@ -939,35 +910,28 @@ class AdjustView extends ViewController
 
 	onLevelChange()
 	{
-		const {host, auto} = this;
-
-		if (auto > Auto.Usr) {
+		if (this.auto > Auto.Usr) {
 			this.UISetMode(this.auto = Auto.Usr);
 		}
 
-		sync.set(host, this.auto, this.level);
+		sync.set(this.host, this.auto, this.level);
 	}
 
 	UISetMode(newMode)
 	{
-		this.switch.isOn = newMode;
+		this.switch.isOn = !!newMode;
 
-		switch (newMode)
-		{
-			case Auto.Off:
-				return this.scope.textContent = 'Global';
-
-			case Auto.Usr:
-				return this.scope.textContent = this.host.replace('www.', '');
-
-			default:
-				return this.scope.textContent = string.format('Auto-Disabled: %s', this.autoReason);
-		}
+		this.scope.textContent = match(newMode,
+			[Auto.Off, 'Global'],
+			[Auto.Hex, 'Auto-Disabled: Dark Site'],
+			[Auto.Img, 'Auto-Disabled: Image'],
+			[Auto.Usr, this.host.replace('www.', '')],
+		);
 	}
 
-	UISetLevel(value, animate)
+	UISetLevel(level, animate)
 	{
-		this.slider.setValue(value, animate);
+		this.slider.setValue(level, animate);
 	}
 
 	get level()
@@ -975,56 +939,37 @@ class AdjustView extends ViewController
 		return this.slider.getValue();
 	}
 
-	get autoReason()
-	{
-		switch (this.auto) {
-			case Auto.Img: return 'Image';
-			case Auto.Hex: return 'Dark Site';
-		}
-	}
-
-	onLevelDidChange(newVal)
-	{
-		this.UISetLevel(newVal);
-	}
-
-	onAutoModeDisabled(host)
-	{
-		this.init(host, Anim.Swift);
-	}
-
 	viewDidSet(view)
 	{
-		const localSwitch = new UISwitch({
+		this.switch = new UISwitch({
 			isOn:false,
-			target:[this, 'onChange:autoSwitchClicked'],
+			target:[this, 'onChange:modeSwitchClicked'],
+			superview:[view, 'modeSwitch'],
 		});
 
-		const adjustUp = new UIStepper({
-			css:'CSAdjustButton',
-			image:'UIIconPlus',
-			target:[this, 'onInvoke:adjustButtonClicked'],
-			value:+Level.MaxStep,
-		});
-
-		const adjustDown = new UIStepper({
-			css:'CSAdjustButton',
+		new UIStepper({
+			styles:'CSAdjustButton',
 			image:'UIIconMinus',
 			target:[this, 'onInvoke:adjustButtonClicked'],
 			value:-Level.MaxStep,
+			superview:[view, 'controls'],
 		});
 
-		const adjustSlider = new UISlider({
-			css:'CSAdjustSlider',
+		this.slider = new UISlider({
+			styles:'CSAdjustSlider',
 			range:Range(Level.Min, Level.Max, Level.Step, Level.Min),
 			target:[this, 'onChange:onLevelChange'],
+			superview:[view, 'controls'],
 		});
 
-		view.addSubview(localSwitch, 'localSwitch');
-		view.addSubviews([adjustDown, adjustSlider, adjustUp], 'controls');
+		new UIStepper({
+			styles:'CSAdjustButton',
+			image:'UIIconPlus',
+			target:[this, 'onInvoke:adjustButtonClicked'],
+			value:+Level.MaxStep,
+			superview:[view, 'controls'],
+		});
 
-		this.slider = adjustSlider;
-		this.switch = localSwitch;
 		this.scope = view.queryId('scope');
 	}
 }
@@ -1043,16 +988,6 @@ class App extends Main
 	onReady({url})
 	{
 		new AppController(url);
-	}
-
-	onLevelDidChange(newVal)
-	{
-		notifications.send({levelDidChange:newVal});
-	}
-
-	onAutoModeDisabled(host)
-	{
-		notifications.send({autoModeDisabled:host});
 	}
 }
 

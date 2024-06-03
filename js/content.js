@@ -60,6 +60,13 @@ function assign()
 	return Object.assign(...arguments);
 }
 
+function match(expr, ...cases)
+{
+	for (const [k, v] of cases) {
+		if (expr === k) return v;
+	}
+}
+
 function on(s)
 {
 	return 'on' + s[0].toUpperCase() + s.slice(1);
@@ -118,11 +125,6 @@ class array
 
 class math
 {
-	static float(float, p = 2)
-	{
-		return +(float).toFixed(p);
-	}
-
 	static bound(n, [min, max])
 	{
 		return n < min ? min : n > max ? max : n;
@@ -192,7 +194,7 @@ class storage
 	static rewrite(obj)
 	{
 		return this.local.clear().then(
-			this.local.set(obj)
+			_ => this.set(obj)
 		);
 	}
 
@@ -290,9 +292,9 @@ class Layer
 
 	remove()
 	{
-		notifications.removeListener(this, 'mutation');
-
 		this.el.remove();
+
+		notifications.removeListener(this);
 	}
 }
 
@@ -320,7 +322,7 @@ class App
 	init(anim)
 	{
 		return sync.load(this.host).then(
-			({level, auto}) => this.adjust(level, anim) || !(this.auto = auto)
+			({level, auto}) => void this.adjust(level, anim) || !(this.auto = auto)
 		);
 	}
 
@@ -350,7 +352,7 @@ class App
 			const modeChange = [c.oldValue, c.newValue].some(is.null);
 
 			if (modeChange) {
-				return this.didLoad && this.init(Anim.Easy);
+				return this.init(Anim.Easy);
 			}
 
 			return this.adjust(c.newValue.level);
@@ -359,7 +361,11 @@ class App
 
 	autoDetect()
 	{
-		const reason = this.getAutoMode();
+		const reason = match(true,
+			[this.isDoc, Auto.Off],
+			[this.isMedia, Auto.Img],
+			[this.hexTest, Auto.Hex],
+		);
 
 		if (reason) {
 			this.autoDisable(reason);
@@ -367,21 +373,6 @@ class App
 
 		if (reason === undefined) {
 			setTimeout(_ => this.hexTest && this.autoDisable(Auto.Hex, Anim.Swift), 1e3);
-		}
-	}
-
-	getAutoMode()
-	{
-		if (this.isDoc) {
-			return Auto.Off;
-		}
-
-		if (this.isMedia) {
-			return Auto.Img;
-		}
-
-		if (this.hexTest) {
-			return Auto.Hex;
 		}
 	}
 
@@ -408,11 +399,6 @@ class App
 		);
 
 		notifications.addListener(this, 'mutation');
-	}
-
-	get didLoad()
-	{
-		return document.timeline.currentTime > 2e3;
 	}
 
 	get isDoc()

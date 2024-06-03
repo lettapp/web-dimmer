@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "minimum_chrome_version": "100",
-    "version": "24.05.30",
+    "version": "24.6.3",
     "name": "Lett Web Dimmer",
     "description": "Adjust brightness level on any website.",
     "icons": {
@@ -31,7 +31,7 @@
         "service_worker": "/js/worker.js"
     },
     "action": {
-        "default_popup": "/html/popup.html"
+        "default_popup": "/html/control.html"
     },
     "commands": {
         "increase": {
