@@ -212,18 +212,9 @@ class tabs
 		return this.query({active:true, currentWindow:true}).then(tabs => tabs[0]);
 	}
 
-	static isScriptable(url = 'chrome://newtab')
+	static host(tab)
 	{
-		url = new URL(url);
-
-		if (url.protocol != 'chrome:' && url.host != 'chromewebstore.google.com') {
-			return url;
-		}
-	}
-
-	static host(url)
-	{
-		url = this.isScriptable(url);
+		const url = this.isScriptable(tab);
 
 		if (url) {
 			return url.host || url.pathname.split('/').pop();
@@ -233,8 +224,22 @@ class tabs
 	static getAccessible()
 	{
 		return this.query({}).then(
-			tabs => tabs.filter(tab => this.isScriptable(tab.url))
+			tabs => tabs.filter(tab => this.isScriptable(tab))
 		);
+	}
+
+	static isScriptable(tab)
+	{
+		const url = new URL(tab.url || 'chrome://newtab');
+
+		const unscriptable = [
+			'chromewebstore.google.com',
+			'microsoftedge.microsoft.com',
+		];
+
+		if (url.protocol != 'chrome:' && !unscriptable.includes(url.host)) {
+			return url;
+		}
 	}
 
 	static query(p)
@@ -323,7 +328,7 @@ class App extends Main
 
 	onCommand(command, tab)
 	{
-		const host = tabs.host(tab.url);
+		const host = tabs.host(tab);
 
 		if (host) switch (command)
 		{

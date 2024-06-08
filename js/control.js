@@ -212,18 +212,9 @@ class tabs
 		return this.query({active:true, currentWindow:true}).then(tabs => tabs[0]);
 	}
 
-	static isScriptable(url = 'chrome://newtab')
+	static host(tab)
 	{
-		url = new URL(url);
-
-		if (url.protocol != 'chrome:' && url.host != 'chromewebstore.google.com') {
-			return url;
-		}
-	}
-
-	static host(url)
-	{
-		url = this.isScriptable(url);
+		const url = this.isScriptable(tab);
 
 		if (url) {
 			return url.host || url.pathname.split('/').pop();
@@ -233,8 +224,22 @@ class tabs
 	static getAccessible()
 	{
 		return this.query({}).then(
-			tabs => tabs.filter(tab => this.isScriptable(tab.url))
+			tabs => tabs.filter(tab => this.isScriptable(tab))
 		);
+	}
+
+	static isScriptable(tab)
+	{
+		const url = new URL(tab.url || 'chrome://newtab');
+
+		const unscriptable = [
+			'chromewebstore.google.com',
+			'microsoftedge.microsoft.com',
+		];
+
+		if (url.protocol != 'chrome:' && !unscriptable.includes(url.host)) {
+			return url;
+		}
 	}
 
 	static query(p)
@@ -517,8 +522,8 @@ class UIView extends UIElement
 		}
 
 		if (init.superview) {
-			const [view, targetId] = init.superview;
-			view.addSubview(this, targetId);
+			const [view, parentId] = init.superview;
+			view.addSubview(this, parentId);
 		}
 
 		this.didInit(init);
@@ -532,12 +537,12 @@ class UIView extends UIElement
 		this.element.remove();
 	}
 
-	addSubview(view, targetId)
+	addSubview(view, parentId)
 	{
-		switch (typeof targetId)
+		switch (typeof parentId)
 		{
 			case 'string':
-				return this.queryId(targetId).appendChild(view.element);
+				return this.queryId(parentId).appendChild(view.element);
 
 			case 'number':
 				return this.element.prepend(view.element);
@@ -547,10 +552,10 @@ class UIView extends UIElement
 		}
 	}
 
-	addSubviews(views, targetId)
+	addSubviews(views, parentId)
 	{
 		for (const view of views) {
-			this.addSubview(view, targetId)
+			this.addSubview(view, parentId)
 		}
 	}
 
@@ -781,9 +786,9 @@ class UISwitch extends UISlider
 
 class AppController extends ViewController
 {
-	constructor(url)
+	constructor(tab)
 	{
-		const host = tabs.host(url);
+		const host = tabs.host(tab);
 
 		super(
 			new UIView({})
@@ -985,9 +990,9 @@ class App extends Main
 		self.UI = new UIFactory;
 	}
 
-	onReady({url})
+	onReady(tab)
 	{
-		new AppController(url);
+		new AppController(tab);
 	}
 }
 
